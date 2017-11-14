@@ -2,7 +2,7 @@
 * Fengkai Wu
 
 ## Overview
-Driving assistance software on autonomous vehicles require real-time and robust awareness of the road situation. The project will focus on the implementation of a GPU-accelerated computation from the data of a stereo camera on a self-driving car.
+Driving assistance software on autonomous vehicles require real-time and robust awareness of the road situation. The project will focus on the implementation of a real-time algorithm that can be GPU accelerated for obstacle detection on a self-driving car.
 
 The large amount of low-level pixel data can be represented as stixel world. given the fact that man-made environments are mostly presented to be horizontal and vertical. A stixel is a segment of image columns with a width of a few pixels, which can be used to represent the sky, the road and obstacles around. By classifying the stixels in the view, automobiles can be guided to the right direction.
 
