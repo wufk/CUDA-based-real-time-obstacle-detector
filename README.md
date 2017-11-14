@@ -8,7 +8,9 @@ The large amount of low-level pixel data can be represented as stixel world. giv
 
 The principle of calculating the stixels is based on a Maximum A Posteriori (MAP) probabilistic model, which can be solved using dynamic programming. The recurrence in the algorithm can be parallelized and proves to suit the scheme of GPU computation. 
 
-This project aims to develop a fast real-time obstacle detector using OpenCV and CUDA. The figure below shows the desired result.
+This project aims to develop a fast real-time obstacle detector using OpenCV and CUDA. The figure below shows the desired result. Figure credit to Ref-1.
+
+[![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/stixels.png)]()
 
 ## Milestones
 * 11/20 Set up the environment and gives a naïve implementation by CPU
