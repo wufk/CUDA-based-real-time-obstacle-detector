@@ -74,12 +74,14 @@ void cpuStixelWorld::compute(const cv::Mat& disparity, std::vector<Stixel>& stix
 }
 
 void cpuStixelWorld::FreeSpace::compute(const cv::Mat1f & disparity, std::vector<int>& path, const CameraParameters & camera)
-
 {
 	const int umax = disparity.rows;
 	const int vmax = disparity.cols;
 
+	//cost score for the object
 	cv::Mat1f score(umax, vmax);
+
+	//
 	cv::Mat1i table(umax, vmax);
 	table.col(0) = 0;
 
@@ -105,6 +107,7 @@ void cpuStixelWorld::FreeSpace::compute(const cv::Mat1f & disparity, std::vector
 	for (int v = 0; v < vhor; v++)
 		score.col(v) = SCORE_INV;
 
+	//float maxScore = std::numeric_limits<float>::min();
 	for (int u = 0; u < umax; u++)
 	{
 		// compute and accumlate differences between measured disparity and expected road disparity
@@ -131,8 +134,9 @@ void cpuStixelWorld::FreeSpace::compute(const cv::Mat1f & disparity, std::vector
 		{
 			// compute the object score
 			float objectScore = 0.f;
-			for (int v = vT[vB]; v < vB; ++v)
+			for (int v = vT[vB]; v < vB; ++v) {
 				objectScore += disparity(u, v) > 0.f ? fabsf(disparity(u, v) - roadDisp[vB]) : SCORE_DEFAULT;
+			}
 
 			// compute the road score
 			const float roadScore = integralRoadDiff[vmax - 1] - integralRoadDiff[vB - 1];
@@ -141,10 +145,23 @@ void cpuStixelWorld::FreeSpace::compute(const cv::Mat1f & disparity, std::vector
 		}
 	}
 
+	double minS, maxScore;
+	cv::Mat1f memvals(umax, vmax);
+	score.copyTo(memvals);
+	cv::minMaxIdx(memvals, &minS, &maxScore);
+	memvals -= minS;
+	maxScore -= minS;
+	memvals /= maxScore;
+
+	cv::rotate(memvals, memvals, 0);
+
+	cv::imshow("member vals", memvals);
+
 	// extract the optimal free space path by dynamic programming
 	// forward step
 	for (int uc = 1; uc < umax; uc++)
 	{
+		//uc: u current. up: u previous
 		const int up = uc - 1;
 
 		for (int vc = vhor; vc < vmax; vc++)
@@ -156,9 +173,14 @@ void cpuStixelWorld::FreeSpace::compute(const cv::Mat1f & disparity, std::vector
 			int minv = 0;
 			for (int vp = vp1; vp < vp2; vp++)
 			{
+				//dc: disparity current. dp: disparity previous
 				const float dc = disparity(uc, vc);
 				const float dp = disparity(up, vp);
+
+				//the non negative difference between the dc and dp
 				const float dispJump = (dc >= 0.f && dp >= 0.f) ? fabsf(dp - dc) : SCORE_DEFAULT;
+
+				//clamp the penalty
 				const float penalty = std::min(param_.Cs * dispJump, param_.Cs * param_.Ts);
 				const float s = score(up, vp) + penalty;
 				if (s < minScore)
@@ -172,6 +194,8 @@ void cpuStixelWorld::FreeSpace::compute(const cv::Mat1f & disparity, std::vector
 			table(uc, vc) = minv;
 		}
 	}
+
+
 
 	// backward step
 	path.resize(umax);
@@ -190,6 +214,8 @@ void cpuStixelWorld::FreeSpace::compute(const cv::Mat1f & disparity, std::vector
 		path[u] = minv;
 		minv = table(u, minv);
 	}
+
+
 }
 
 void cpuStixelWorld::HeightSegmentation::compute(const cv::Mat1f & disparity, const std::vector<int>& lowerPath, std::vector<int>& upperPath, const CameraParameters & camera)
@@ -201,6 +227,11 @@ void cpuStixelWorld::HeightSegmentation::compute(const cv::Mat1f & disparity, co
 	cv::Mat1f score(umax, vmax);
 	cv::Mat1i table(umax, vmax);
 	table.col(0) = 0;
+
+	//cv::Mat trans;
+	//cv::Mat tmpdis;
+	//cv::rotate(disparity, tmpdis, 0);
+	//cv::imshow("try", tmpdis / 64);
 
 	CoordinateTransform tf(camera);
 
@@ -247,6 +278,19 @@ void cpuStixelWorld::HeightSegmentation::compute(const cv::Mat1f & disparity, co
 			score(u, vT) = score1 - score2;
 		}
 	}
+
+	//double minS, maxScore;
+	//cv::Mat1f memvals(umax, vmax);
+	//score.copyTo(memvals);
+	//cv::minMaxIdx(memvals, &minS, &maxScore);
+	//memvals -= minS;
+	//maxScore -= minS;
+	//memvals /= maxScore;
+
+	//cv::rotate(memvals, memvals, 0);
+	////cv::flip(memvals, trans, 1);
+
+	//cv::imshow("member vals", memvals);
 
 	// extract the optimal height path by dynamic programming
 	// forward step
@@ -306,4 +350,16 @@ void cpuStixelWorld::HeightSegmentation::compute(const cv::Mat1f & disparity, co
 		upperPath[u] = minv;
 		minv = table(u, minv);
 	}
+
+	//double minS, maxScore;
+	//cv::minMaxIdx(score, &minS, &maxScore);
+	//score -= minS;
+	//maxScore -= minS;
+	//score /= maxScore;
+
+	//cv::rotate(score, score, 0);
+
+	//cv::imshow("member cost", score);
+
+	//score.convertTo(score, CV_8U);
 }

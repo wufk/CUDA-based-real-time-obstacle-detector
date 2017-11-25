@@ -137,6 +137,7 @@ int main(int argc, char* argv[])
 		// draw stixels
 		cv::Mat draw;
 		cv::cvtColor(left_img, draw, cv::COLOR_GRAY2BGRA);
+		cv::imshow("Original", left_img);
 
 		cv::Mat stixelImg = cv::Mat::zeros(left_img.size(), draw.type());
 		for (const auto& stixel : stixels)
@@ -146,6 +147,13 @@ int main(int argc, char* argv[])
 
 		cv::imshow("disparity", disparity / numDisparities);
 		cv::imshow("stixels", draw);
+		cv::imwrite("./stixels.jpg", draw);
+		//cv::Mat trans;
+		//cv::rotate(draw, draw, 0);
+		//cv::flip(draw, trans, 1);
+		////cv::imshow("transstixels", trans);
+		//cv::imwrite("./transstixles.jpg", trans);
+		
 
 		const char c = cv::waitKey(1);
 		if (c == 27)

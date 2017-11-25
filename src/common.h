@@ -53,7 +53,7 @@ public:
 		Parameters()
 		{
 			// stixel width
-			stixelWidth = 7;
+			stixelWidth = 3;
 
 			// maximum disparity
 			minDisparity = -1;
