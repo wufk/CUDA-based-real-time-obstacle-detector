@@ -6,6 +6,8 @@ set(SOURCE_FILES
     "cost_function.h"
     "gpu.h"
     "gpu.cu"
+    "kernels.cu"
+    "kernels.h"
     )
 
 cuda_add_library(src
