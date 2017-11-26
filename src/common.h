@@ -37,38 +37,6 @@ public:
 		}
 	};
 
-	struct Parameters
-	{
-		// stixel width
-		int stixelWidth;
-
-		// minimum and maximum disparity
-		int minDisparity;
-		int maxDisparity;
-
-		// camera parameters
-		CameraParameters camera;
-
-		// default settings
-		Parameters()
-		{
-			// stixel width
-			stixelWidth = 3;
-
-			// maximum disparity
-			minDisparity = -1;
-			maxDisparity = 64;
-
-			// camera parameters
-			camera = CameraParameters();
-		}
-	};
-
 	virtual void compute(const cv::Mat& disp, std::vector<Stixel>& stixels) = 0;
-
-	std::vector<int> lowerPath;
-	std::vector<int> upperPath;
-
-protected:
-	Parameters param_;
+	
 };

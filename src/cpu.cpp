@@ -1,4 +1,8 @@
 #include "cpu.h"
+#include "matrix.h"
+#include "cost_function.h"
+
+#include <algorithm>
 
 float cpuStixelWorld::averageDisparity(const cv::Mat& disparity, const cv::Rect& rect, int minDisp, int maxDisp)
 {
@@ -19,347 +23,209 @@ float cpuStixelWorld::averageDisparity(const cv::Mat& disparity, const cv::Rect&
 void cpuStixelWorld::compute(const cv::Mat& disparity, std::vector<Stixel>& stixels)
 {
 	CV_Assert(disparity.type() == CV_32F);
-	CV_Assert(param_.stixelWidth % 2 == 1);
 
 	const int stixelWidth = param_.stixelWidth;
 	const int w = disparity.cols / stixelWidth;
 	const int h = disparity.rows;
+	const int fnmax = static_cast<int>(param_.dmax);
 
 	// compute horizontal median of each column
-	cv::Mat1f columns(w, h);
+	Matrixf columns(w, h);
 	std::vector<float> buf(stixelWidth);
 	for (int v = 0; v < h; v++)
 	{
 		for (int u = 0; u < w; u++)
 		{
 			// compute horizontal median
-			float mean = 0;
-			for (int du = 0; du < stixelWidth; du++) {
-				mean += disparity.at<float>(v, u * stixelWidth + du);
+			for (int du = 0; du < stixelWidth; du++)
 				buf[du] = disparity.at<float>(v, u * stixelWidth + du);
-			}
-			//const float m = mean / stixelWidth;
 			std::sort(std::begin(buf), std::end(buf));
 			const float m = buf[stixelWidth / 2];
 
-			// store with transposed
-			columns.ptr<float>(u)[v] = m;
+			// reverse order of data so that v = 0 points the bottom
+			columns(u, h - 1 - v) = m;
 		}
 	}
 
-	// free space computation
-	FreeSpace freeSpace;
-	freeSpace.compute(columns, lowerPath, param_.camera);
-
-	// height segmentation
-	HeightSegmentation heightSegmentation;
-	heightSegmentation.compute(columns, lowerPath, upperPath, param_.camera);
-
-	// extract disparity
-	for (int u = 0; u < w; u++)
-	{
-		const int vT = upperPath[u];
-		const int vB = lowerPath[u];
-		const int stixelHeight = vB - vT;
-		const cv::Rect stixelRegion(stixelWidth * u, vT, stixelWidth, stixelHeight);
-
-		Stixel stixel;
-		stixel.u = stixelWidth * u + stixelWidth / 2;
-		stixel.vT = vT;
-		stixel.vB = vB;
-		stixel.width = stixelWidth;
-		stixel.disp = averageDisparity(disparity, stixelRegion, param_.minDisparity, param_.maxDisparity);
-		stixels.push_back(stixel);
-	}
-}
-
-void cpuStixelWorld::FreeSpace::compute(const cv::Mat1f & disparity, std::vector<int>& path, const CameraParameters & camera)
-{
-	const int umax = disparity.rows;
-	const int vmax = disparity.cols;
-
-	//cost score for the object
-	cv::Mat1f score(umax, vmax);
-
-	//
-	cv::Mat1i table(umax, vmax);
-	table.col(0) = 0;
-
-	CoordinateTransform tf(camera);
-
-	// compute expected road disparity
+	// get camera parameters
+	const CameraParameters& camera = param_.camera;
 	const float sinTilt = sinf(camera.tilt);
 	const float cosTilt = cosf(camera.tilt);
 
-	// assumes planar surface
-	std::vector<float> roadDisp(vmax);
-	for (int v = 0; v < vmax; v++)
-		roadDisp[v] = (camera.baseline / camera.height) * (camera.fu * sinTilt + (v - camera.v0) * cosTilt);
+	// compute expected ground disparity
+	std::vector<float> groundDisparity(h);
+	for (int v = 0; v < h; v++)
+		groundDisparity[h - 1 - v] = std::max((camera.baseline / camera.height) * (camera.fu * sinTilt + (v - camera.v0) * cosTilt), 0.f);
+	const float vhor = h - 1 - (camera.v0 * cosTilt - camera.fu * sinTilt) / cosTilt;
 
-	// get horizontal row (row from which road dispaliry becomes negative)
-	const int vhor = cvRound((camera.v0 * cosTilt - camera.fu * sinTilt) / cosTilt);
+	// create data cost function of each segment
+	NegativeLogDataTermGrd dataTermG(param_.dmax, param_.dmin, param_.sigmaG, param_.pOutG, param_.pInvG, camera,
+		groundDisparity, vhor, param_.sigmaH, param_.sigmaA);
+	NegativeLogDataTermObj dataTermO(param_.dmax, param_.dmin, param_.sigmaO, param_.pOutO, param_.pInvO, camera, param_.deltaz);
+	NegativeLogDataTermSky dataTermS(param_.dmax, param_.dmin, param_.sigmaS, param_.pOutS, param_.pInvS);
 
-	// compute score image for the free space
-	const float SCORE_INV = -1.f;
-	const float SCORE_DEFAULT = 1.f;
+	// create prior cost function of each segment
+	const int G = NegativeLogPriorTerm::G;
+	const int O = NegativeLogPriorTerm::O;
+	const int S = NegativeLogPriorTerm::S;
+	NegativeLogPriorTerm priorTerm(h, vhor, param_.dmax, param_.dmin, camera.baseline, camera.fu, param_.deltaz,
+		param_.eps, param_.pOrd, param_.pGrav, param_.pBlg, groundDisparity);
 
-	// the base point above horizon is not allowed
-	for (int v = 0; v < vhor; v++)
-		score.col(v) = SCORE_INV;
+	// data cost LUT
+	Matrixf costsG(w, h), costsO(w, h, fnmax), costsS(w, h), sum(w, h);
+	Matrixi valid(w, h);
 
-	//float maxScore = std::numeric_limits<float>::min();
-	for (int u = 0; u < umax; u++)
+	// cost table
+	Matrixf costTable(w, h, 3), dispTable(w, h, 3);
+	Matrix<cv::Point> indexTable(w, h, 3);
+
+	// process each column
+	int u;
+	//#pragma omp parallel for
+	for (u = 0; u < w; u++)
 	{
-		// compute and accumlate differences between measured disparity and expected road disparity
-		std::vector<float> integralRoadDiff(vmax);
+		//////////////////////////////////////////////////////////////////////////////
+		// pre-computate LUT
+		//////////////////////////////////////////////////////////////////////////////
+		float tmpSumG = 0.f;
+		float tmpSumS = 0.f;
+		std::vector<float> tmpSumO(fnmax, 0.f);
+
 		float tmpSum = 0.f;
-		for (int v = vhor; v < vmax; v++)
+		int tmpValid = 0;
+
+		for (int v = 0; v < h; v++)
 		{
-			const float roadDiff = disparity(u, v) > 0.f ? fabsf(disparity(u, v) - roadDisp[v]) : SCORE_DEFAULT;
-			tmpSum += roadDiff;
-			integralRoadDiff[v] = tmpSum;
-		}
+			// measured disparity
+			const float d = columns(u, v);
 
-		// compute search range
-		std::vector<int> vT(vmax, 0);
-		for (int vB = vhor; vB < vmax; vB++)
-		{
-			const float YB = tf.toY(roadDisp[vB], vB);
-			const float ZB = tf.toZ(roadDisp[vB], vB);
-			const float YT = YB - param_.objectHeight;
-			vT[vB] = std::max(cvRound(tf.toV(YT, ZB)), 0);
-		}
+			// pre-computation for ground costs
+			tmpSumG += dataTermG(d, v);
+			costsG(u, v) = tmpSumG;
 
-		for (int vB = vhor; vB < vmax; vB++)
-		{
-			// compute the object score
-			float objectScore = 0.f;
-			for (int v = vT[vB]; v < vB; ++v) {
-				objectScore += disparity(u, v) > 0.f ? fabsf(disparity(u, v) - roadDisp[vB]) : SCORE_DEFAULT;
-			}
+			// pre-computation for sky costs
+			tmpSumS += dataTermS(d);
+			costsS(u, v) = tmpSumS;
 
-			// compute the road score
-			const float roadScore = integralRoadDiff[vmax - 1] - integralRoadDiff[vB - 1];
-
-			score(u, vB) = param_.alpha1 * objectScore + param_.alpha2 * roadScore;
-		}
-	}
-
-	double minS, maxScore;
-	cv::Mat1f memvals(umax, vmax);
-	score.copyTo(memvals);
-	cv::minMaxIdx(memvals, &minS, &maxScore);
-	memvals -= minS;
-	maxScore -= minS;
-	memvals /= maxScore;
-
-	cv::rotate(memvals, memvals, 0);
-
-	cv::imshow("member vals", memvals);
-
-	// extract the optimal free space path by dynamic programming
-	// forward step
-	for (int uc = 1; uc < umax; uc++)
-	{
-		//uc: u current. up: u previous
-		const int up = uc - 1;
-
-		for (int vc = vhor; vc < vmax; vc++)
-		{
-			const int vp1 = std::max(vc - param_.maxPixelJump, vhor);
-			const int vp2 = std::min(vc + param_.maxPixelJump + 1, vmax);
-
-			float minScore = std::numeric_limits<float>::max();
-			int minv = 0;
-			for (int vp = vp1; vp < vp2; vp++)
+			// pre-computation for object costs
+			for (int fn = 0; fn < fnmax; fn++)
 			{
-				//dc: disparity current. dp: disparity previous
-				const float dc = disparity(uc, vc);
-				const float dp = disparity(up, vp);
-
-				//the non negative difference between the dc and dp
-				const float dispJump = (dc >= 0.f && dp >= 0.f) ? fabsf(dp - dc) : SCORE_DEFAULT;
-
-				//clamp the penalty
-				const float penalty = std::min(param_.Cs * dispJump, param_.Cs * param_.Ts);
-				const float s = score(up, vp) + penalty;
-				if (s < minScore)
-				{
-					minScore = s;
-					minv = vp;
-				}
+				tmpSumO[fn] += dataTermO(d, fn);
+				costsO(u, v, fn) = tmpSumO[fn];
 			}
 
-			score(uc, vc) += minScore;
-			table(uc, vc) = minv;
-		}
-	}
-
-
-
-	// backward step
-	path.resize(umax);
-	float minScore = std::numeric_limits<float>::max();
-	int minv = 0;
-	for (int v = vhor; v < vmax; v++)
-	{
-		if (score(umax - 1, v) < minScore)
-		{
-			minScore = score(umax - 1, v);
-			minv = v;
-		}
-	}
-	for (int u = umax - 1; u >= 0; u--)
-	{
-		path[u] = minv;
-		minv = table(u, minv);
-	}
-
-
-}
-
-void cpuStixelWorld::HeightSegmentation::compute(const cv::Mat1f & disparity, const std::vector<int>& lowerPath, std::vector<int>& upperPath, const CameraParameters & camera)
-
-{
-	const int umax = disparity.rows;
-	const int vmax = disparity.cols;
-
-	cv::Mat1f score(umax, vmax);
-	cv::Mat1i table(umax, vmax);
-	table.col(0) = 0;
-
-	//cv::Mat trans;
-	//cv::Mat tmpdis;
-	//cv::rotate(disparity, tmpdis, 0);
-	//cv::imshow("try", tmpdis / 64);
-
-	CoordinateTransform tf(camera);
-
-	// compute score image for the height segmentation
-	for (int u = 0; u < umax; u++)
-	{
-		// get the base point
-		const int vB = lowerPath[u];
-		const float dB = disparity(u, vB);
-
-		// deltaD represents the allowed deviation in disparity
-		float deltaD = 0.f;
-		if (dB > 0.f)
-		{
-			const float YB = tf.toY(dB, vB);
-			const float ZB = tf.toZ(dB, vB);
-			deltaD = dB - tf.toD(YB, ZB + param_.deltaZ);
-		}
-
-		// compute and accumlate membership value
-		std::vector<float> integralMembership(vmax);
-		float tmpSum = 0.f;
-		for (int v = 0; v < vmax; v++)
-		{
-			const float d = disparity(u, v);
-
-			float membership = 0.f;
-			if (dB > 0.f && d > 0.f)
+			// pre-computation for mean disparity of stixel
+			if (d >= 0.f)
 			{
-				const float deltad = (d - dB) / deltaD;
-				const float exponent = 1.f - deltad * deltad;
-				membership = powf(2.f, exponent) - 1.f;
+				tmpSum += d;
+				tmpValid++;
 			}
-
-			tmpSum += membership;
-			integralMembership[v] = tmpSum;
+			sum(u, v) = tmpSum;
+			valid(u, v) = tmpValid;
 		}
 
-		score(u, 0) = integralMembership[vB - 1];
-		for (int vT = 1; vT < vB; vT++)
+		//////////////////////////////////////////////////////////////////////////////
+		// compute cost tables
+		//////////////////////////////////////////////////////////////////////////////
+		for (int vT = 0; vT < h; vT++)
 		{
-			const float score1 = integralMembership[vT - 1];
-			const float score2 = integralMembership[vB - 1] - integralMembership[vT - 1];
-			score(u, vT) = score1 - score2;
-		}
-	}
+			float minCostG, minCostO, minCostS;
+			float minDispG, minDispO, minDispS;
+			cv::Point minPosG(G, 0), minPosO(O, 0), minPosS(S, 0);
 
-	//double minS, maxScore;
-	//cv::Mat1f memvals(umax, vmax);
-	//score.copyTo(memvals);
-	//cv::minMaxIdx(memvals, &minS, &maxScore);
-	//memvals -= minS;
-	//maxScore -= minS;
-	//memvals /= maxScore;
-
-	//cv::rotate(memvals, memvals, 0);
-	////cv::flip(memvals, trans, 1);
-
-	//cv::imshow("member vals", memvals);
-
-	// extract the optimal height path by dynamic programming
-	// forward step
-	for (int uc = 1; uc < umax; uc++)
-	{
-		const int up = uc - 1;
-		const int vB = lowerPath[uc];
-
-		for (int vc = 0; vc < vB; vc++)
-		{
-			const int vp1 = std::max(vc - param_.maxPixelJump, 0);
-			const int vp2 = std::min(vc + param_.maxPixelJump + 1, vB);
-
-			float minScore = std::numeric_limits<float>::max();
-			int minv = 0;
-			for (int vp = vp1; vp < vp2; vp++)
+			// process vB = 0
 			{
-				const float dc = disparity(uc, vc);
-				const float dp = disparity(up, vp);
+				// compute mean disparity within the range of vB to vT
+				const float d1 = sum(u, vT) / std::max(valid(u, vT), 1);
+				const int fn = cvRound(d1);
 
-				float Cz = 1.f;
-				if (dc > 0.f && dp > 0.f)
-				{
-					const float Zc = tf.toZ(dc, vc);
-					const float Zp = tf.toZ(dp, vp);
-					Cz = std::max(0.f, 1 - fabsf(Zc - Zp) / param_.Nz);
-				}
-
-				const float penalty = param_.Cs * abs(vc - vp) * Cz;
-				const float s = score(up, vp) + penalty;
-				if (s < minScore)
-				{
-					minScore = s;
-					minv = vp;
-				}
+				// initialize minimum costs
+				minCostG = costsG(u, vT) + priorTerm.getG0(vT);
+				minCostO = costsO(u, vT, fn) + priorTerm.getO0(vT);
+				minCostS = costsS(u, vT) + priorTerm.getS0(vT);
+				minDispG = minDispO = minDispS = d1;
 			}
 
-			score(uc, vc) += minScore;
-			table(uc, vc) = minv;
+			for (int vB = 1; vB <= vT; vB++)
+			{
+				// compute mean disparity within the range of vB to vT
+				const float d1 = (sum(u, vT) - sum(u, vB - 1)) / std::max(valid(u, vT) - valid(u, vB - 1), 1);
+				const int fn = cvRound(d1);
+
+				// compute data terms costs
+				const float dataCostG = vT < vhor ? costsG(u, vT) - costsG(u, vB - 1) : N_LOG_0_0;
+				const float dataCostO = costsO(u, vT, fn) - costsO(u, vB - 1, fn);
+				const float dataCostS = vT < vhor ? N_LOG_0_0 : costsS(u, vT) - costsS(u, vB - 1);
+
+				// compute priors costs and update costs
+				const float d2 = dispTable(u, vB - 1, 1);
+
+#define UPDATE_COST(C1, C2) \
+				const float cost##C1##C2 = dataCost##C1 + priorTerm.get##C1##C2(vB, cvRound(d1), cvRound(d2)) + costTable(u, vB - 1, C2); \
+				if (cost##C1##C2 < minCost##C1) \
+				{ \
+					minCost##C1 = cost##C1##C2; \
+					minDisp##C1 = d1; \
+					minPos##C1 = cv::Point(C2, vB - 1); \
+				} \
+
+				UPDATE_COST(G, G);
+				UPDATE_COST(G, O);
+				UPDATE_COST(G, S);
+				UPDATE_COST(O, G);
+				UPDATE_COST(O, O);
+				UPDATE_COST(O, S);
+				UPDATE_COST(S, G);
+				UPDATE_COST(S, O);
+				UPDATE_COST(S, S);
+			}
+
+			costTable(u, vT, G) = minCostG;
+			costTable(u, vT, O) = minCostO;
+			costTable(u, vT, S) = minCostS;
+
+			dispTable(u, vT, G) = minDispG;
+			dispTable(u, vT, O) = minDispO;
+			dispTable(u, vT, S) = minDispS;
+
+			indexTable(u, vT, G) = minPosG;
+			indexTable(u, vT, O) = minPosO;
+			indexTable(u, vT, S) = minPosS;
 		}
 	}
 
-	// backward step
-	upperPath.resize(umax);
-	float minScore = std::numeric_limits<float>::max();
-	int minv = 0;
-	for (int v = 0; v < vmax; v++)
+	//////////////////////////////////////////////////////////////////////////////
+	// backtracking step
+	//////////////////////////////////////////////////////////////////////////////
+	for (int u = 0; u < w; u++)
 	{
-		if (score(umax - 1, v) < minScore)
+		float minCost = std::numeric_limits<float>::max();
+		cv::Point minPos;
+		for (int c = 0; c < 3; c++)
 		{
-			minScore = score(umax - 1, v);
-			minv = v;
+			const float cost = costTable(u, h - 1, c);
+			if (cost < minCost)
+			{
+				minCost = cost;
+				minPos = cv::Point(c, h - 1);
+			}
+		}
+
+		while (minPos.y > 0)
+		{
+			const cv::Point p1 = minPos;
+			const cv::Point p2 = indexTable(u, p1.y, p1.x);
+			if (p1.x == O) // object
+			{
+				Stixel stixel;
+				stixel.u = stixelWidth * u + stixelWidth / 2;
+				stixel.vT = h - 1 - p1.y;
+				stixel.vB = h - 1 - (p2.y + 1);
+				stixel.width = stixelWidth;
+				stixel.disp = dispTable(u, p1.y, p1.x);
+				stixels.push_back(stixel);
+			}
+			minPos = p2;
 		}
 	}
-	for (int u = umax - 1; u >= 0; u--)
-	{
-		upperPath[u] = minv;
-		minv = table(u, minv);
-	}
-
-	//double minS, maxScore;
-	//cv::minMaxIdx(score, &minS, &maxScore);
-	//score -= minS;
-	//maxScore -= minS;
-	//score /= maxScore;
-
-	//cv::rotate(score, score, 0);
-
-	//cv::imshow("member cost", score);
-
-	//score.convertTo(score, CV_8U);
 }

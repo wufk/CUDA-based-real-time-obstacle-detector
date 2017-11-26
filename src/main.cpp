@@ -69,7 +69,7 @@ int main(int argc, char* argv[])
 	const cv::FileStorage cvfs(argv[3], CV_STORAGE_READ);
 	CV_Assert(cvfs.isOpened());
 	const cv::FileNode node(cvfs.fs, NULL);
-	StixelWorld::Parameters param;
+	cpuStixelWorld::Parameters param;
 	param.camera.fu = node["FocalLengthX"];
 	param.camera.fv = node["FocalLengthY"];
 	param.camera.u0 = node["CenterX"];
@@ -77,8 +77,8 @@ int main(int argc, char* argv[])
 	param.camera.baseline = node["BaseLine"];
 	param.camera.height = node["Height"];
 	param.camera.tilt = node["Tilt"];
-	param.minDisparity = -1;
-	param.maxDisparity = numDisparities;
+	param.dmin = -1;
+	param.dmax = numDisparities;
 
 	cpuStixelWorld stixelWorld(param);
 

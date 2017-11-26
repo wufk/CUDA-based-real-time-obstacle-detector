@@ -2,6 +2,8 @@ set(SOURCE_FILES
     "common.h"
     "cpu.h"
     "cpu.cpp"
+    "matrix.h"
+    "cost_function.h"
     "gpu.h"
     "gpu.cu"
     )
