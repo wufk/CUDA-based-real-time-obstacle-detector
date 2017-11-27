@@ -80,8 +80,10 @@ int main(int argc, char* argv[])
 	param.dmin = -1;
 	param.dmax = numDisparities;
 
+	cv::Mat dummyRead = cv::imread(argv[1], CV_LOAD_IMAGE_UNCHANGED);
+
 	cpuStixelWorld stixelWorld(param);
-	gpuStixelWorld t_stixelWorld(param);
+	gpuStixelWorld t_stixelWorld(param, dummyRead.rows, dummyRead.cols);
 
 	for (int frameno = 1;; frameno++)
 	{

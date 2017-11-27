@@ -11,34 +11,6 @@
 #define _USE_MATH_DEFINES
 #include <math.h>
 
-class gpuStixelWorld : StixelWorld {
-public:
-
-	gpuStixelWorld(const Parameters& param) {
-		param_ = param;
-		d_disparity_colReduced = nullptr;
-		d_disparity_original = nullptr;
-		d_disparity_columns = nullptr;
-	}
-
-	virtual void compute(const cv::Mat& disp, std::vector<Stixel>& stixels) override;
-
-	//methods
-	void destroy();
-
-private:
-	Parameters param_;
-
-	int m_rows;
-	int m_cols;
-
-	float *d_disparity_original;
-	float *d_disparity_colReduced;
-	float *d_disparity_columns;
-
-
-};
-
 //////////////////////////////////////////////////////////////////////////////
 // data cost functions
 //////////////////////////////////////////////////////////////////////////////
@@ -46,14 +18,19 @@ private:
 static const float PI = static_cast<float>(M_PI);
 static const float SQRT2 = static_cast<float>(M_SQRT2);
 
-struct NegativeLogDataTermGrd
+class gpuNegativeLogDataTermGrd
 {
+public:
 	using CameraParameters = StixelWorld::CameraParameters;
 
-	NegativeLogDataTermGrd(float dmax, float dmin, float sigmaD, float pOut, float pInv, const CameraParameters& camera,
-		const std::vector<float>& groundDisparity, float vhor, float sigmaH, float sigmaA)
+	gpuNegativeLogDataTermGrd() {
+
+	}
+
+	gpuNegativeLogDataTermGrd(float dmax, float dmin, float sigmaD, float pOut, float pInv, const CameraParameters& camera,
+		float* d_groundDisparity, float vhor, float sigmaH, float sigmaA, int h)
 	{
-		init(dmax, dmin, sigmaD, pOut, pInv, camera, groundDisparity, vhor, sigmaH, sigmaA);
+		init(dmax, dmin, sigmaD, pOut, pInv, camera, d_groundDisparity, vhor, sigmaH, sigmaA, h);
 	}
 
 	inline float operator()(float d, int v) const
@@ -66,43 +43,25 @@ struct NegativeLogDataTermGrd
 
 	// pre-compute constant terms
 	void init(float dmax, float dmin, float sigmaD, float pOut, float pInv, const CameraParameters& camera,
-		const std::vector<float>& groundDisparity, float vhor, float sigmaH, float sigmaA)
-	{
-		// uniform distribution term
-		nLogPUniform_ = logf(dmax - dmin) - logf(pOut);
+		float* d_groundDisparity, float vhor, float sigmaH, float sigmaA, int h);
 
-		const float cf = camera.fu * camera.baseline / camera.height;
-
-		// Gaussian distribution term
-		const int h = static_cast<int>(groundDisparity.size());
-		nLogPGaussian_.resize(h);
-		cquad_.resize(h);
-		fn_.resize(h);
-		for (int v = 0; v < h; v++)
-		{
-			const float tmp = ((vhor - v) / camera.fv + camera.tilt) / camera.height;
-			const float sigmaR2 = cf * cf * (tmp * tmp * sigmaH * sigmaH + sigmaA * sigmaA);
-			const float sigma = sqrtf(sigmaD * sigmaD + sigmaR2);
-
-			const float fn = groundDisparity[v];
-			const float ANorm = 0.5f * (erff((dmax - fn) / (SQRT2 * sigma)) - erff((dmin - fn) / (SQRT2 * sigma)));
-			nLogPGaussian_[v] = logf(ANorm) + logf(sigma * sqrtf(2.f * PI)) - logf(1.f - pOut);
-			fn_[v] = fn;
-
-			// coefficient of quadratic part
-			cquad_[v] = 1.f / (2.f * sigma * sigma);
-		}
-	}
+	void destroy();
 
 	float nLogPUniform_;
 	std::vector<float> nLogPGaussian_, cquad_, fn_;
+	float *d_nLogPGaussian_, *d_cquad_, *d_fn_;
 };
 
-struct NegativeLogDataTermObj
+class gpuNegativeLogDataTermObj
 {
+public:
 	using CameraParameters = StixelWorld::CameraParameters;
 
-	NegativeLogDataTermObj(float dmax, float dmin, float sigma, float pOut, float pInv, const CameraParameters& camera, float deltaz)
+	gpuNegativeLogDataTermObj () {
+
+	}
+
+	gpuNegativeLogDataTermObj(float dmax, float dmin, float sigma, float pOut, float pInv, const CameraParameters& camera, float deltaz)
 	{
 		init(dmax, dmin, sigma, pOut, pInv, camera, deltaz);
 	}
@@ -116,35 +75,21 @@ struct NegativeLogDataTermObj
 	}
 
 	// pre-compute constant terms
-	void init(float dmax, float dmin, float sigmaD, float pOut, float pInv, const CameraParameters& camera, float deltaz)
-	{
-		// uniform distribution term
-		nLogPUniform_ = logf(dmax - dmin) - logf(pOut);
-
-		// Gaussian distribution term
-		const int fnmax = static_cast<int>(dmax);
-		nLogPGaussian_.resize(fnmax);
-		cquad_.resize(fnmax);
-		for (int fn = 0; fn < fnmax; fn++)
-		{
-			const float sigmaZ = fn * fn * deltaz / (camera.fu * camera.baseline);
-			const float sigma = sqrtf(sigmaD * sigmaD + sigmaZ * sigmaZ);
-
-			const float ANorm = 0.5f * (erff((dmax - fn) / (SQRT2 * sigma)) - erff((dmin - fn) / (SQRT2 * sigma)));
-			nLogPGaussian_[fn] = logf(ANorm) + logf(sigma * sqrtf(2.f * PI)) - logf(1.f - pOut);
-
-			// coefficient of quadratic part
-			cquad_[fn] = 1.f / (2.f * sigma * sigma);
-		}
-	}
+	void init(float dmax, float dmin, float sigmaD, float pOut, float pInv, const CameraParameters& camera, float deltaz);
 
 	float nLogPUniform_;
 	std::vector<float> nLogPGaussian_, cquad_;
+	float *d_nLogPGaussian_, *d_cquad_;
 };
 
-struct NegativeLogDataTermSky
+class gpuNegativeLogDataTermSky
 {
-	NegativeLogDataTermSky(float dmax, float dmin, float sigmaD, float pOut, float pInv, float fn = 0.f) : fn_(fn)
+public:
+	gpuNegativeLogDataTermSky() {
+
+	}
+
+	gpuNegativeLogDataTermSky(float dmax, float dmin, float sigmaD, float pOut, float pInv, float fn = 0.f) : fn_(fn)
 	{
 		init(dmax, dmin, sigmaD, pOut, pInv, fn);
 	}
@@ -158,18 +103,7 @@ struct NegativeLogDataTermSky
 	}
 
 	// pre-compute constant terms
-	void init(float dmax, float dmin, float sigmaD, float pOut, float pInv, float fn)
-	{
-		// uniform distribution term
-		nLogPUniform_ = logf(dmax - dmin) - logf(pOut);
-
-		// Gaussian distribution term
-		const float ANorm = 0.5f * (erff((dmax - fn) / (SQRT2 * sigmaD)) - erff((dmin - fn) / (SQRT2 * sigmaD)));
-		nLogPGaussian_ = logf(ANorm) + logf(sigmaD * sqrtf(2.f * PI)) - logf(1.f - pOut);
-
-		// coefficient of quadratic part
-		cquad_ = 1.f / (2.f * sigmaD * sigmaD);
-	}
+	void init(float dmax, float dmin, float sigmaD, float pOut, float pInv, float fn);
 
 	float nLogPUniform_, cquad_, nLogPGaussian_, fn_;
 };
@@ -184,13 +118,14 @@ static const float N_LOG_0_7 = -static_cast<float>(log(0.7));
 static const float N_LOG_0_0 = std::numeric_limits<float>::infinity();
 static const float N_LOG_1_0 = 0.f;
 
-struct NegativeLogPriorTerm
+class gpuNegativeLogPriorTerm
 {
+public:
 	static const int G = 0;
 	static const int O = 1;
 	static const int S = 2;
 
-	NegativeLogPriorTerm(int h, float vhor, float dmax, float dmin, float b, float fu, float deltaz, float eps,
+	gpuNegativeLogPriorTerm(int h, float vhor, float dmax, float dmin, float b, float fu, float deltaz, float eps,
 		float pOrd, float pGrav, float pBlg, const std::vector<float>& groundDisparity)
 	{
 		init(h, vhor, dmax, dmin, b, fu, deltaz, eps, pOrd, pGrav, pBlg, groundDisparity);
@@ -249,112 +184,55 @@ struct NegativeLogPriorTerm
 	}
 
 	void init(int h, float vhor, float dmax, float dmin, float b, float fu, float deltaz, float eps,
-		float pOrd, float pGrav, float pBlg, const std::vector<float>& groundDisparity)
-	{
-		const int fnmax = static_cast<int>(dmax);
-
-		costs0_.create(h, 2);
-		costs1_.create(h, 3, 3);
-		costs2_O_O_.create(fnmax, fnmax);
-		costs2_O_S_.create(1, fnmax);
-		costs2_O_G_.create(h, fnmax);
-		costs2_S_O_.create(fnmax, fnmax);
-
-		for (int vT = 0; vT < h; vT++)
-		{
-			const float P1 = N_LOG_1_0;
-			const float P2 = -logf(1.f / h);
-			const float P3_O = vT > vhor ? N_LOG_1_0 : N_LOG_0_5;
-			const float P3_G = vT > vhor ? N_LOG_0_0 : N_LOG_0_5;
-			const float P4_O = -logf(1.f / (dmax - dmin));
-			const float P4_G = N_LOG_1_0;
-
-			costs0_(vT, O) = P1 + P2 + P3_O + P4_O;
-			costs0_(vT, G) = P1 + P2 + P3_G + P4_G;
-		}
-
-		for (int vB = 0; vB < h; vB++)
-		{
-			const float P1 = N_LOG_1_0;
-			const float P2 = -logf(1.f / (h - vB));
-
-			const float P3_O_O = vB - 1 < vhor ? N_LOG_0_7 : N_LOG_0_5;
-			const float P3_G_O = vB - 1 < vhor ? N_LOG_0_3 : N_LOG_0_0;
-			const float P3_S_O = vB - 1 < vhor ? N_LOG_0_0 : N_LOG_0_5;
-
-			const float P3_O_G = vB - 1 < vhor ? N_LOG_0_7 : N_LOG_0_0;
-			const float P3_G_G = vB - 1 < vhor ? N_LOG_0_3 : N_LOG_0_0;
-			const float P3_S_G = vB - 1 < vhor ? N_LOG_0_0 : N_LOG_0_0;
-
-			const float P3_O_S = vB - 1 < vhor ? N_LOG_0_0 : N_LOG_1_0;
-			const float P3_G_S = vB - 1 < vhor ? N_LOG_0_0 : N_LOG_0_0;
-			const float P3_S_S = vB - 1 < vhor ? N_LOG_0_0 : N_LOG_0_0;
-
-			costs1_(vB, O, O) = P1 + P2 + P3_O_O;
-			costs1_(vB, G, O) = P1 + P2 + P3_G_O;
-			costs1_(vB, S, O) = P1 + P2 + P3_S_O;
-
-			costs1_(vB, O, G) = P1 + P2 + P3_O_G;
-			costs1_(vB, G, G) = P1 + P2 + P3_G_G;
-			costs1_(vB, S, G) = P1 + P2 + P3_S_G;
-
-			costs1_(vB, O, S) = P1 + P2 + P3_O_S;
-			costs1_(vB, G, S) = P1 + P2 + P3_G_S;
-			costs1_(vB, S, S) = P1 + P2 + P3_S_S;
-		}
-
-		for (int d1 = 0; d1 < fnmax; d1++)
-			costs2_O_O_(0, d1) = N_LOG_0_0;
-
-		for (int d2 = 1; d2 < fnmax; d2++)
-		{
-			const float z = b * fu / d2;
-			const float deltad = d2 - b * fu / (z + deltaz);
-			for (int d1 = 0; d1 < fnmax; d1++)
-			{
-				if (d1 > d2 + deltad)
-					costs2_O_O_(d2, d1) = -logf(pOrd / (d2 - deltad));
-				else if (d1 <= d2 - deltad)
-					costs2_O_O_(d2, d1) = -logf((1.f - pOrd) / (dmax - d2 - deltad));
-				else
-					costs2_O_O_(d2, d1) = N_LOG_0_0;
-			}
-		}
-
-		for (int v = 0; v < h; v++)
-		{
-			const float fn = groundDisparity[v];
-			for (int d1 = 0; d1 < fnmax; d1++)
-			{
-				if (d1 > fn + eps)
-					costs2_O_G_(v, d1) = -logf(pGrav / (dmax - fn - eps));
-				else if (d1 < fn - eps)
-					costs2_O_G_(v, d1) = -logf(pBlg / (fn - eps - dmin));
-				else
-					costs2_O_G_(v, d1) = -logf((1.f - pGrav - pBlg) / (2.f * eps));
-			}
-		}
-
-		for (int d1 = 0; d1 < fnmax; d1++)
-		{
-			costs2_O_S_(d1) = d1 > eps ? -logf(1.f / (dmax - dmin - eps)) : N_LOG_0_0;
-		}
-
-		for (int d2 = 0; d2 < fnmax; d2++)
-		{
-			for (int d1 = 0; d1 < fnmax; d1++)
-			{
-				if (d2 < eps)
-					costs2_S_O_(d2, d1) = N_LOG_0_0;
-				else if (d1 <= 0)
-					costs2_S_O_(d2, d1) = N_LOG_1_0;
-				else
-					costs2_S_O_(d2, d1) = N_LOG_0_0;
-			}
-		}
-	}
+		float pOrd, float pGrav, float pBlg, const std::vector<float>& groundDisparity);
 
 	Matrixf costs0_, costs1_;
 	Matrixf costs2_O_O_, costs2_O_G_, costs2_O_S_, costs2_S_O_;
 };
 
+class gpuStixelWorld : StixelWorld {
+public:
+
+	gpuStixelWorld(const Parameters& param, int rows, int cols) {
+		param_ = param;
+		d_disparity_colReduced = nullptr;
+		d_disparity_original = nullptr;
+		d_disparity_columns = nullptr;
+
+		m_rows = rows;
+		m_cols = cols;
+		m_h = rows;
+
+		const CameraParameters& camera = param_.camera;
+		const float sinTilt = sinf(camera.tilt);
+		const float cosTilt = cosf(camera.tilt);
+
+		m_vhor = m_h - 1 - (camera.v0 * cosTilt - camera.fu * sinTilt) / cosTilt;
+
+		preprocess(camera, sinTilt, cosTilt);
+	}
+
+	virtual void compute(const cv::Mat& disp, std::vector<Stixel>& stixels) override;
+
+	void preprocess(const CameraParameters& camera, float sinTilt, float cosTilt);
+
+	//methods
+	void destroy();
+
+private:
+	Parameters param_;
+
+	int m_rows;
+	int m_cols;
+	int m_h;
+	int m_vhor;
+
+	float *d_disparity_original;
+	float *d_disparity_colReduced;
+	float *d_disparity_columns;
+	float *d_groundDisp;
+
+	gpuNegativeLogDataTermGrd m_dataTermG;
+	gpuNegativeLogDataTermObj m_dataTermO;
+	gpuNegativeLogDataTermSky m_dataTermS;
+};
