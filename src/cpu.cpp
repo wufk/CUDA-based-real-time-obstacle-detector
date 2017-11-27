@@ -31,21 +31,29 @@ void cpuStixelWorld::compute(const cv::Mat& disparity, std::vector<Stixel>& stix
 
 	// compute horizontal median of each column
 	Matrixf columns(w, h);
+	cv::Mat c(w, h, cv::DataType<float>::type);
+
 	std::vector<float> buf(stixelWidth);
 	for (int v = 0; v < h; v++)
 	{
 		for (int u = 0; u < w; u++)
 		{
 			// compute horizontal median
-			for (int du = 0; du < stixelWidth; du++)
-				buf[du] = disparity.at<float>(v, u * stixelWidth + du);
-			std::sort(std::begin(buf), std::end(buf));
-			const float m = buf[stixelWidth / 2];
+			float sum = 0;
+			for (int du = 0; du < stixelWidth; du++) {
+				sum += disparity.at<float>(v, u * stixelWidth + du);
+				//buf[du] = disparity.at<float>(v, u * stixelWidth + du);
+			}
+			//std::sort(std::begin(buf), std::end(buf));
+			//const float m = buf[stixelWidth / 2];
+			float m = sum / stixelWidth;
 
 			// reverse order of data so that v = 0 points the bottom
 			columns(u, h - 1 - v) = m;
+			c.at<float>(u, h - 1 - v) = m;
 		}
 	}
+
 
 	// get camera parameters
 	const CameraParameters& camera = param_.camera;

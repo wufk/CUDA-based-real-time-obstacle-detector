@@ -14,8 +14,14 @@ typedef float pixel_t;
 
 #include "gpu.h"
 
-struct gpuStixelWorld::Parameters;
-struct Stixel;
+__global__ void testkernel(pixel_t *d);
 
+__global__ void transposeDisparity(pixel_t *d_disparity, pixel_t *d_transDisparity, int rows, int cols);
+
+__global__ void columnReduction(pixel_t *d_disparity, pixel_t *d_columns, 
+	int width, int rows, int cols, int c_cols);
+
+__global__ void columnReductionMean(pixel_t *d_disparity, pixel_t *d_columns,
+	int width, int rows, int cols, int c_cols);
 
 #endif // !__KERNELS_H__

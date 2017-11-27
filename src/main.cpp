@@ -69,7 +69,7 @@ int main(int argc, char* argv[])
 	const cv::FileStorage cvfs(argv[3], CV_STORAGE_READ);
 	CV_Assert(cvfs.isOpened());
 	const cv::FileNode node(cvfs.fs, NULL);
-	cpuStixelWorld::Parameters param;
+	StixelWorld::Parameters param;
 	param.camera.fu = node["FocalLengthX"];
 	param.camera.fv = node["FocalLengthY"];
 	param.camera.u0 = node["CenterX"];
@@ -81,6 +81,7 @@ int main(int argc, char* argv[])
 	param.dmax = numDisparities;
 
 	cpuStixelWorld stixelWorld(param);
+	gpuStixelWorld t_stixelWorld(param);
 
 	for (int frameno = 1;; frameno++)
 	{
@@ -128,7 +129,8 @@ int main(int argc, char* argv[])
 
 		const auto t1 = std::chrono::system_clock::now();
 
-		stixelWorld.compute(disparity, stixels);
+		//stixelWorld.compute(disparity, stixels);
+		t_stixelWorld.compute(disparity, stixels);
 
 		const auto t2 = std::chrono::system_clock::now();
 		const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
@@ -153,6 +155,8 @@ int main(int argc, char* argv[])
 		//cv::flip(draw, trans, 1);
 		////cv::imshow("transstixels", trans);
 		//cv::imwrite("./transstixles.jpg", trans);
+
+		t_stixelWorld.destroy();
 		
 
 		const char c = cv::waitKey(1);
