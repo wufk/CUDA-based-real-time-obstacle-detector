@@ -38,7 +38,7 @@ public:
 		if (d < 0.f)
 			return 0.f;
 
-		return std::min(nLogPUniform_, nLogPGaussian_[v] + cquad_[v] * (d - fn_[v]) * (d - fn_[v]));
+		return std::min(nLogPUniform_, h_nLogPGaussian_[v] + h_cquad_[v] * (d - h_fn_[v]) * (d - h_fn_[v]));
 	}
 
 	// pre-compute constant terms
@@ -48,7 +48,7 @@ public:
 	void destroy();
 
 	float nLogPUniform_;
-	std::vector<float> nLogPGaussian_, cquad_, fn_;
+	float *h_nLogPGaussian_, *h_cquad_, *h_fn_;
 	float *d_nLogPGaussian_, *d_cquad_, *d_fn_;
 };
 
@@ -66,19 +66,21 @@ public:
 		init(dmax, dmin, sigma, pOut, pInv, camera, deltaz);
 	}
 
+	void destroy();
+
 	inline float operator()(float d, int fn) const
 	{
 		if (d < 0.f)
 			return 0.f;
 
-		return std::min(nLogPUniform_, nLogPGaussian_[fn] + cquad_[fn] * (d - fn) * (d - fn));
+		return std::min(nLogPUniform_, h_nLogPGaussian_[fn] + h_cquad_[fn] * (d - fn) * (d - fn));
 	}
 
 	// pre-compute constant terms
 	void init(float dmax, float dmin, float sigmaD, float pOut, float pInv, const CameraParameters& camera, float deltaz);
 
 	float nLogPUniform_;
-	std::vector<float> nLogPGaussian_, cquad_;
+	float *h_nLogPGaussian_, *h_cquad_;
 	float *d_nLogPGaussian_, *d_cquad_;
 };
 
@@ -202,12 +204,26 @@ public:
 		m_rows = rows;
 		m_cols = cols;
 		m_h = rows;
+		m_w = m_cols / param_.stixelWidth;
 
 		const CameraParameters& camera = param_.camera;
 		const float sinTilt = sinf(camera.tilt);
 		const float cosTilt = cosf(camera.tilt);
-
 		m_vhor = m_h - 1 - (camera.v0 * cosTilt - camera.fu * sinTilt) / cosTilt;
+
+		d_disparity_colReduced = nullptr;
+		d_disparity_columns = nullptr;
+
+		cudaMalloc((void **)&d_disparity_original, m_rows * m_cols * sizeof(float));
+		cudaMalloc((void **)&d_disparity_colReduced, m_h * m_w * sizeof(float));
+		cudaMalloc((void **)&d_disparity_columns, m_h * m_w * sizeof(float));
+		data = new float[m_h * m_w];
+
+		/* zero copy for colRecued */
+		//cudaSetDeviceFlags(cudaDeviceMapHost);
+		//cudaHostAlloc((void**)&h_disparity_colReduced, m_h * m_w * sizeof(float), cudaHostAllocMapped);
+		//cudaHostGetDevicePointer((void**)&d_disparity_colReduced, (void*)h_disparity_colReduced, 0);
+		
 
 		preprocess(camera, sinTilt, cosTilt);
 	}
@@ -225,12 +241,16 @@ private:
 	int m_rows;
 	int m_cols;
 	int m_h;
+	int m_w;
 	int m_vhor;
 
 	float *d_disparity_original;
 	float *d_disparity_colReduced;
 	float *d_disparity_columns;
 	float *d_groundDisp;
+
+	float *h_disparity_colReduced;
+	float *data;
 
 	gpuNegativeLogDataTermGrd m_dataTermG;
 	gpuNegativeLogDataTermObj m_dataTermO;

@@ -80,15 +80,20 @@ int main(int argc, char* argv[])
 	param.dmin = -1;
 	param.dmax = numDisparities;
 
-	cv::Mat dummyRead = cv::imread(argv[1], CV_LOAD_IMAGE_UNCHANGED);
+	//cv::Mat dummyRead = cv::imread(argv[1], CV_LOAD_IMAGE_UNCHANGED);
 
 	cpuStixelWorld stixelWorld(param);
-	gpuStixelWorld t_stixelWorld(param, dummyRead.rows, dummyRead.cols);
+	//gpuStixelWorld t_stixelWorld(param, dummyRead.rows, dummyRead.cols);
+	gpuStixelWorld t_stixelWorld(param, 333, 1024);
 
 	for (int frameno = 1;; frameno++)
 	{
-		cv::Mat left_img = cv::imread(argv[1], CV_LOAD_IMAGE_UNCHANGED);
-		cv::Mat right_img = cv::imread(argv[2], CV_LOAD_IMAGE_UNCHANGED);
+		char bufl[256], bufr[256];
+		sprintf(bufl, argv[1], frameno);
+		sprintf(bufr, argv[2], frameno);
+
+		cv::Mat left_img = cv::imread(bufl, CV_LOAD_IMAGE_UNCHANGED);
+		cv::Mat right_img = cv::imread(bufr, CV_LOAD_IMAGE_UNCHANGED);
 
 		if (left_img.empty() || right_img.empty())
 		{
@@ -158,7 +163,7 @@ int main(int argc, char* argv[])
 		////cv::imshow("transstixels", trans);
 		//cv::imwrite("./transstixles.jpg", trans);
 
-		t_stixelWorld.destroy();
+		//t_stixelWorld.destroy();
 		
 
 		const char c = cv::waitKey(1);
