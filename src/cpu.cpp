@@ -1,7 +1,7 @@
 #include "cpu.h"
 #include "matrix.h"
 #include "cost_function.h"
-
+#include <chrono>
 #include <algorithm>
 
 float cpuStixelWorld::averageDisparity(const cv::Mat& disparity, const cv::Rect& rect, int minDisp, int maxDisp)
@@ -60,11 +60,17 @@ void cpuStixelWorld::compute(const cv::Mat& disparity, std::vector<Stixel>& stix
 	const float sinTilt = sinf(camera.tilt);
 	const float cosTilt = cosf(camera.tilt);
 
+	const auto t1 = std::chrono::system_clock::now();
+
 	// compute expected ground disparity
 	std::vector<float> groundDisparity(h);
 	for (int v = 0; v < h; v++)
 		groundDisparity[h - 1 - v] = std::max((camera.baseline / camera.height) * (camera.fu * sinTilt + (v - camera.v0) * cosTilt), 0.f);
 	const float vhor = h - 1 - (camera.v0 * cosTilt - camera.fu * sinTilt) / cosTilt;
+
+	const auto t2 = std::chrono::system_clock::now();
+	const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+	std::cout << "cpu preprocess time: " << 1e-3 * duration << "[msec]" << std::endl;
 
 	// create data cost function of each segment
 	NegativeLogDataTermGrd dataTermG(param_.dmax, param_.dmin, param_.sigmaG, param_.pOutG, param_.pInvG, camera,

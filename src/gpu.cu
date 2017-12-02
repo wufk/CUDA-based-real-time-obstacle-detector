@@ -1,7 +1,7 @@
 #include "gpu.h"
 
 #include <stdio.h>
-
+#include <chrono>
 
 inline static unsigned divup(unsigned n, unsigned div)
 {
@@ -28,31 +28,30 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 		exit(1);
 	}
 
-	cudaMemcpy(d_disparity_original, h_disparity, m_rows * m_cols * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(h_disparity_original, h_disparity, m_rows * m_cols * sizeof(float), cudaMemcpyHostToHost);
+	//cudaMemcpy(d_disparity_original, h_disparity, m_rows * m_cols * sizeof(float), cudaMemcpyHostToDevice);
 
-	dim3 dimBlock(32, 32, 1);
-	int r = divup(h, 32); int c = divup(w, 32);
+	dim3 dimBlock(BLOCKSIZE, BLOCKSIZE, 1);
+	int r = divup(h, BLOCKSIZE); int c = divup(w, BLOCKSIZE);
 	dim3 dd(divup(h, dimBlock.x), divup(w, dimBlock.y), 1);
 	dim3 dimGrid(c, r, 1);
 
 	//columnReductionMean << <dd, dimBlock >> > (d_disparity_original, d_disparity_colReduced, stixelWidth, m_rows, m_cols, w);
 	//transposeDisparity <<< dimGrid, dimBlock >>> (d_disparity_colReduced, d_disparity_columns, h, w);
 
-	columnReduction << <dimGrid, dimBlock >> > (d_disparity_original, d_disparity_colReduced, stixelWidth, m_rows, m_cols, w);
-	cudaMemcpy(data, d_disparity_colReduced, h * w * sizeof(float), cudaMemcpyDeviceToHost);
-
+	//columnReduction << <dimGrid, dimBlock >> > (d_disparity_original, d_disparity_colReduced, stixelWidth, m_rows, m_cols, w);
+	//cudaMemcpy(data, d_disparity_colReduced, h * w * sizeof(float), cudaMemcpyDeviceToHost);
 	//cudaMemcpy(data, d_disparity_columns, h * w * sizeof(float), cudaMemcpyDeviceToHost);
 	//cv::Mat columns = cv::Mat(w, h, CV_32F, data);
 
 	/* zero cpy for colReduced */
-	//columnReduction << <dimGrid, dimBlock >> > (d_disparity_original, d_disparity_colReduced, stixelWidth, m_rows, m_cols, m_w);
+	columnReduction << <dimGrid, dimBlock >> > (d_disparity_original, d_disparity_colReduced, stixelWidth, m_rows, m_cols, m_w);
 
 
 	/* for debug */
 	//float *tmp_colums = new float[h * w];
 	//cudaMemcpy(tmp_colums, d_disparity_colReduced, h * w * sizeof(float), cudaMemcpyDeviceToHost);
 	////cudaMemcpy(tmp_colums, d_disparity_columns, h * w * sizeof(float), cudaMemcpyDeviceToHost);
-
 	//cv::Mat mmat(w, h, cv::DataType<float>::type);
 	//for (int v = 0; v < h; v++)
 	//{
@@ -67,14 +66,12 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	//		mmat.at<float>(u, h - 1 - v) = m;
 	//	}
 	//}
-
-
 	//float *matdata = (float*)mmat.data;
 	//for (int k = 0; k < w * h; k++) {
 	//	/*if (k > 10000)*/
 	//		std::cout << k << ": " << tmp_colums[k] << " " << matdata[k] << "|";
 	//}
-	int k = 0;
+	//int k = 0;
 
 	// get camera parameters
 	const CameraParameters& camera = param_.camera;
@@ -137,8 +134,8 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 			// measured disparity
 			//const float d = columns.at<float>(u, v);
 			//const float d = columns(u, v);
-			const float d = data[u * h + v];
-			//const float d = h_disparity_colReduced[u * h + v];
+			//const float d = data[u * h + v];
+			const float d = h_disparity_colReduced[u * h + v];
 
 			// pre-computation for ground costs
 			tmpSumG += m_dataTermG(d, v);
@@ -274,9 +271,10 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 
 void gpuStixelWorld::preprocess(const CameraParameters & camera, float sinTilt, float cosTilt)
 {
+	const auto t1 = std::chrono::system_clock::now();
 	d_groundDisp = nullptr;
 	cudaMalloc((void**)&d_groundDisp, m_h * sizeof(float));
-	kernComputeGroundDisp << <divup(m_h, 32), 32 >> > (d_groundDisp, m_h,
+	kernComputeGroundDisp << <divup(m_h, BLOCKSIZE), BLOCKSIZE >> > (d_groundDisp, m_h,
 		camera.baseline, camera.height, camera.fu, camera.v0, sinTilt, cosTilt);
 
 	m_dataTermG = gpuNegativeLogDataTermGrd(param_.dmax, param_.dmin, param_.sigmaG, param_.pOutG, param_.pInvG, camera,
@@ -284,6 +282,9 @@ void gpuStixelWorld::preprocess(const CameraParameters & camera, float sinTilt, 
 	m_dataTermO = gpuNegativeLogDataTermObj(param_.dmax, param_.dmin, param_.sigmaO, param_.pOutO, param_.pInvO, camera, param_.deltaz);
 	m_dataTermS = gpuNegativeLogDataTermSky(param_.dmax, param_.dmin, param_.sigmaS, param_.pOutS, param_.pInvS);
 
+	const auto t2 = std::chrono::system_clock::now();
+	const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+	std::cout << "preprocess time: " << 1e-3 * duration << "[msec]" << std::endl;
 }
 
 void gpuStixelWorld::destroy()
@@ -313,6 +314,7 @@ void gpuNegativeLogDataTermGrd::init(float dmax, float dmin, float sigmaD,
 	//cudaMalloc((void**)&d_fn_, h * sizeof(float));
 	//cudaMalloc((void**)&d_nLogPGaussian_, h * sizeof(float));
 
+	/* this is for zero copy */
 	cudaSetDeviceFlags(cudaDeviceMapHost);
 	cudaHostAlloc((void**)&h_nLogPGaussian_, h * sizeof(float), cudaHostAllocMapped);
 	cudaHostAlloc((void**)&h_cquad_, h * sizeof(float), cudaHostAllocMapped);
@@ -321,15 +323,13 @@ void gpuNegativeLogDataTermGrd::init(float dmax, float dmin, float sigmaD,
 	cudaHostGetDevicePointer((void**)&d_cquad_, (void *)h_cquad_, 0);
 	cudaHostGetDevicePointer((void**)&d_fn_, (void *)h_fn_, 0);
 
-	dim3 dimBlock(divup(h, 32));
-	kernComputeNegativeLogDataTermGrd << <dimBlock,32 >> > (h, d_groundDisparity, d_nLogPGaussian_, d_fn_, d_cquad_,
+	dim3 dimBlock(divup(h, BLOCKSIZE));
+	kernComputeNegativeLogDataTermGrd << <dimBlock,BLOCKSIZE >> > (h, d_groundDisparity, d_nLogPGaussian_, d_fn_, d_cquad_,
 		camera.fv, camera.tilt, camera.height, cf, sigmaA, sigmaH, sigmaD, dmax, dmin, SQRT2, PI, pOut, vhor);
-
 
 	//cudaMemcpy(h_nLogPGaussian_, d_nLogPGaussian_, h * sizeof(float), cudaMemcpyDeviceToHost);
 	//cudaMemcpy(h_fn_, d_fn_, h * sizeof(float), cudaMemcpyDeviceToHost);
 	//cudaMemcpy(h_cquad_, d_cquad_, h * sizeof(float), cudaMemcpyDeviceToHost);
-
 }
 
 void gpuNegativeLogDataTermGrd::destroy()
@@ -366,24 +366,27 @@ void gpuNegativeLogDataTermObj::init(float dmax, float dmin, float sigmaD, float
 	// Gaussian distribution term
 	const int fnmax = static_cast<int>(dmax);
 
-	cudaSetDeviceFlags(cudaDeviceMapHost);
-	cudaHostAlloc((void**)&h_nLogPGaussian_, fnmax * sizeof(float), cudaHostAllocMapped);
-	cudaHostAlloc((void**)&h_cquad_, fnmax * sizeof(float), cudaHostAllocMapped);
-	cudaHostGetDevicePointer((void**)&d_nLogPGaussian_, (void *)h_nLogPGaussian_, 0);
-	cudaHostGetDevicePointer((void**)&d_cquad_, (void *)h_cquad_, 0);
 
 	//h_nLogPGaussian_ = new float[fnmax];
 	//h_cquad_ = new float[fnmax];
-
 	//cudaMalloc((void**)&d_cquad_, fnmax * sizeof(float));
 	//cudaMalloc((void**)&d_nLogPGaussian_, fnmax * sizeof(float));
 
-	dim3 dimBlock(divup(fnmax, 32));
-	kernComputeNegativeLogDataTermObj << <dimBlock, 32 >> > (fnmax, d_cquad_, d_nLogPGaussian_,
+	/* this is for zero copy */
+	cudaSetDeviceFlags(cudaDeviceMapHost);
+
+	cudaHostAlloc((void**)&h_nLogPGaussian_, fnmax * sizeof(float), cudaHostAllocMapped);
+	cudaHostAlloc((void**)&h_cquad_, fnmax * sizeof(float), cudaHostAllocMapped);
+
+	cudaHostGetDevicePointer((void**)&d_nLogPGaussian_, (void *)h_nLogPGaussian_, 0);
+	cudaHostGetDevicePointer((void**)&d_cquad_, (void *)h_cquad_, 0);
+
+	dim3 dimBlock(divup(fnmax, BLOCKSIZE));
+	kernComputeNegativeLogDataTermObj << <dimBlock, BLOCKSIZE >> > (fnmax, d_cquad_, d_nLogPGaussian_,
 		camera.fu, camera.baseline, sigmaD, deltaz, SQRT2, PI, pOut, dmin, dmax);
 
-	//cudaMemcpy(h_nLogPGaussian_, d_nLogPGaussian_, fnmax * sizeof(float), cudaMemcpyDeviceToHost);
 
+	//cudaMemcpy(h_nLogPGaussian_, d_nLogPGaussian_, fnmax * sizeof(float), cudaMemcpyDeviceToHost);
 	//cudaMemcpy(h_cquad_, d_cquad_, fnmax * sizeof(float), cudaMemcpyDeviceToHost);
 }
 

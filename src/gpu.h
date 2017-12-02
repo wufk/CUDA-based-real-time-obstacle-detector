@@ -11,6 +11,8 @@
 #define _USE_MATH_DEFINES
 #include <math.h>
 
+#define BLOCKSIZE 32
+
 //////////////////////////////////////////////////////////////////////////////
 // data cost functions
 //////////////////////////////////////////////////////////////////////////////
@@ -211,21 +213,26 @@ public:
 		const float cosTilt = cosf(camera.tilt);
 		m_vhor = m_h - 1 - (camera.v0 * cosTilt - camera.fu * sinTilt) / cosTilt;
 
-		d_disparity_colReduced = nullptr;
-		d_disparity_columns = nullptr;
+		//d_disparity_colReduced = nullptr;
+		//d_disparity_columns = nullptr;
 
-		cudaMalloc((void **)&d_disparity_original, m_rows * m_cols * sizeof(float));
-		cudaMalloc((void **)&d_disparity_colReduced, m_h * m_w * sizeof(float));
-		cudaMalloc((void **)&d_disparity_columns, m_h * m_w * sizeof(float));
+
+		cudaSetDeviceFlags(cudaDeviceMapHost);
+		//cudaMalloc((void **)&d_disparity_original, m_rows * m_cols * sizeof(float));
+		cudaHostAlloc((void**)&h_disparity_original, m_rows * m_cols * sizeof(float), cudaHostAllocMapped);
+		cudaHostGetDevicePointer((void**)&d_disparity_original, (void*)h_disparity_original, 0);
+			
+		
 		data = new float[m_h * m_w];
-
+		//cudaMalloc((void **)&d_disparity_colReduced, m_h * m_w * sizeof(float));
 		/* zero copy for colRecued */
 		//cudaSetDeviceFlags(cudaDeviceMapHost);
-		//cudaHostAlloc((void**)&h_disparity_colReduced, m_h * m_w * sizeof(float), cudaHostAllocMapped);
-		//cudaHostGetDevicePointer((void**)&d_disparity_colReduced, (void*)h_disparity_colReduced, 0);
+		cudaHostAlloc((void**)&h_disparity_colReduced, m_h * m_w * sizeof(float), cudaHostAllocMapped);
+		cudaHostGetDevicePointer((void**)&d_disparity_colReduced, (void*)h_disparity_colReduced, 0);
 		
 
 		preprocess(camera, sinTilt, cosTilt);
+		// this line can be earsed forever cudaMalloc((void **)&d_disparity_columns, m_h * m_w * sizeof(float));
 	}
 
 	virtual void compute(const cv::Mat& disp, std::vector<Stixel>& stixels) override;
@@ -249,6 +256,7 @@ private:
 	float *d_disparity_columns;
 	float *d_groundDisp;
 
+	float *h_disparity_original;
 	float *h_disparity_colReduced;
 	float *data;
 

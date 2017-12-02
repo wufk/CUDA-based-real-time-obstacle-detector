@@ -51,15 +51,14 @@ __global__ void columnReduction(pixel_t *d_disparity, pixel_t *d_output,
 	int ti = by + threadIdx.x;              // Global output x index - remember the transpose
 	int tj = bx + threadIdx.y;              // Global output y index - remember the transpose
 
-	int i_ori = i * width;
-	int index_dis = j * cols + i * width;
+	int i_disparity = i * width;
+	int index_disparity = j * cols + i * width;
 
 	//compute mean
 	float sum = 0.0f;
-#pragma unroll
 	for (int di = 0; di < width; ++di) {
-		if (i_ori + di >= cols) continue;
-		sum += d_disparity[index_dis + di];
+		if (i_disparity + di >= cols) continue;
+		sum += d_disparity[index_disparity + di];
 	}
 	sum /= width;
 
@@ -69,8 +68,11 @@ __global__ void columnReduction(pixel_t *d_disparity, pixel_t *d_output,
 
 	// Copy data from shared memory to global memory
 	// Check for bounds
-	if (ti < rows && tj < cols)
-		d_output[tj * rows + rows - 1 - ti] = mat[threadIdx.x][threadIdx.y]; // Switch threadIdx.x and threadIdx.y from input read
+	if (ti < rows && tj < cols) {
+		d_output[tj * rows + rows - 1 - ti]
+			= mat[threadIdx.x][threadIdx.y];
+	}
+		
 
 	//int idx = blockIdx.x * blockDim.x + threadIdx.x;  
 	//int jdx = blockIdx.y * blockDim.y + threadIdx.y;
