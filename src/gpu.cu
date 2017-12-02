@@ -106,6 +106,7 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	gpuNegativeLogPriorTerm priorTerm(h, vhor, param_.dmax, param_.dmin, camera.baseline, camera.fu, param_.deltaz,
 		param_.eps, param_.pOrd, param_.pGrav, param_.pBlg, groundDisparity);
 
+
 	// data cost LUT
 	Matrixf costsG(w, h), costsO(w, h, fnmax), costsS(w, h), sum(w, h);
 	Matrixi valid(w, h);
@@ -206,7 +207,7 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 					minDisp##C1 = d1; \
 					minPos##C1 = cv::Point(C2, vB - 1); \
 				} \
-
+				
 				UPDATE_COST(G, G);
 				UPDATE_COST(G, O);
 				UPDATE_COST(G, S);
@@ -216,6 +217,7 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 				UPDATE_COST(S, G);
 				UPDATE_COST(S, O);
 				UPDATE_COST(S, S);
+				
 			}
 
 			costTable(u, vT, G) = minCostG;
