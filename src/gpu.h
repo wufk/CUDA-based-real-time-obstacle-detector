@@ -30,8 +30,10 @@ public:
 	}
 
 	gpuNegativeLogDataTermGrd(float dmax, float dmin, float sigmaD, float pOut, float pInv, const CameraParameters& camera,
-		float* d_groundDisparity, float vhor, float sigmaH, float sigmaA, int h)
+		float* d_groundDisparity, float vhor, float sigmaH, float sigmaA, int h, int w)
 	{
+		m_h = h;
+		m_w = w;
 		init(dmax, dmin, sigmaD, pOut, pInv, camera, d_groundDisparity, vhor, sigmaH, sigmaA, h);
 	}
 
@@ -46,12 +48,17 @@ public:
 	// pre-compute constant terms
 	void init(float dmax, float dmin, float sigmaD, float pOut, float pInv, const CameraParameters& camera,
 		float* d_groundDisparity, float vhor, float sigmaH, float sigmaA, int h);
+	
+	void computeCostsG(float* d_disp_colReduced);
 
 	void destroy();
 
+	int m_h, m_w;
 	float nLogPUniform_;
 	float *h_nLogPGaussian_, *h_cquad_, *h_fn_;
 	float *d_nLogPGaussian_, *d_cquad_, *d_fn_;
+
+	float *d_costsG, *h_costsG;
 };
 
 class gpuNegativeLogDataTermObj
@@ -63,11 +70,16 @@ public:
 
 	}
 
-	gpuNegativeLogDataTermObj(float dmax, float dmin, float sigma, float pOut, float pInv, const CameraParameters& camera, float deltaz)
+	gpuNegativeLogDataTermObj(float dmax, float dmin, float sigma, float pOut, float pInv, const CameraParameters& camera, float deltaz, int w, int h)
 	{
+		m_h = h;
+		m_w = w;
+		// Gaussian distribution term
+		fnmax = static_cast<int>(dmax);
+
 		init(dmax, dmin, sigma, pOut, pInv, camera, deltaz);
 	}
-
+	void computeCostsO(float *d_disp_colReduced);
 	void destroy();
 
 	inline float operator()(float d, int fn) const
@@ -81,9 +93,14 @@ public:
 	// pre-compute constant terms
 	void init(float dmax, float dmin, float sigmaD, float pOut, float pInv, const CameraParameters& camera, float deltaz);
 
+	int m_w;
+	int m_h;
+	int fnmax;
+
 	float nLogPUniform_;
 	float *h_nLogPGaussian_, *h_cquad_;
 	float *d_nLogPGaussian_, *d_cquad_;
+	float *d_costsO, *h_costsO;
 };
 
 class gpuNegativeLogDataTermSky
@@ -93,8 +110,10 @@ public:
 
 	}
 
-	gpuNegativeLogDataTermSky(float dmax, float dmin, float sigmaD, float pOut, float pInv, float fn = 0.f) : fn_(fn)
+	gpuNegativeLogDataTermSky(float dmax, float dmin, float sigmaD, float pOut, float pInv, int w, int h, float fn = 0.f) : fn_(fn)
 	{
+		m_h = h;
+		m_w = w;
 		init(dmax, dmin, sigmaD, pOut, pInv, fn);
 	}
 
@@ -108,8 +127,12 @@ public:
 
 	// pre-compute constant terms
 	void init(float dmax, float dmin, float sigmaD, float pOut, float pInv, float fn);
+	void destroy();
+	void computeCostsS(float *d_disparity_colReduced);
 
+	int m_h, m_w;
 	float nLogPUniform_, cquad_, nLogPGaussian_, fn_;
+	float *d_costsS, *h_costsS;
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -130,7 +153,7 @@ public:
 	static const int S = 2;
 
 	gpuNegativeLogPriorTerm(int h, float vhor, float dmax, float dmin, float b, float fu, float deltaz, float eps,
-		float pOrd, float pGrav, float pBlg, const std::vector<float>& groundDisparity)
+		float pOrd, float pGrav, float pBlg, float* groundDisparity)
 	{
 		init(h, vhor, dmax, dmin, b, fu, deltaz, eps, pOrd, pGrav, pBlg, groundDisparity);
 	}
@@ -188,7 +211,7 @@ public:
 	}
 
 	void init(int h, float vhor, float dmax, float dmin, float b, float fu, float deltaz, float eps,
-		float pOrd, float pGrav, float pBlg, const std::vector<float>& groundDisparity);
+		float pOrd, float pGrav, float pBlg, float* groundDisparity);
 
 	Matrixf costs0_, costs1_;
 	Matrixf costs2_O_O_, costs2_O_G_, costs2_O_S_, costs2_S_O_;
@@ -217,19 +240,24 @@ public:
 		//d_disparity_columns = nullptr;
 
 
-		cudaSetDeviceFlags(cudaDeviceMapHost);
-		//cudaMalloc((void **)&d_disparity_original, m_rows * m_cols * sizeof(float));
-		cudaHostAlloc((void**)&h_disparity_original, m_rows * m_cols * sizeof(float), cudaHostAllocMapped);
-		cudaHostGetDevicePointer((void**)&d_disparity_original, (void*)h_disparity_original, 0);
+		//cudaSetDeviceFlags(cudaDeviceMapHost);
+		cudaMalloc((void **)&d_disparity_original, m_rows * m_cols * sizeof(float));
+		//cudaHostAlloc((void**)&h_disparity_original, m_rows * m_cols * sizeof(float), cudaHostAllocMapped);
+		//cudaHostGetDevicePointer((void**)&d_disparity_original, (void*)h_disparity_original, 0);
 			
 		
-		data = new float[m_h * m_w];
-		//cudaMalloc((void **)&d_disparity_colReduced, m_h * m_w * sizeof(float));
+		//data = new float[m_h * m_w];
+		cudaMalloc((void **)&d_disparity_colReduced, m_h * m_w * sizeof(float));
+		cudaMallocHost((void**)&h_disparity_colReduced, m_h * m_w * sizeof(float));
 		/* zero copy for colRecued */
 		//cudaSetDeviceFlags(cudaDeviceMapHost);
-		cudaHostAlloc((void**)&h_disparity_colReduced, m_h * m_w * sizeof(float), cudaHostAllocMapped);
-		cudaHostGetDevicePointer((void**)&d_disparity_colReduced, (void*)h_disparity_colReduced, 0);
+		//cudaHostAlloc((void**)&h_disparity_colReduced, m_h * m_w * sizeof(float), cudaHostAllocMapped);
+		//cudaHostGetDevicePointer((void**)&d_disparity_colReduced, (void*)h_disparity_colReduced, 0);
 		
+		cudaMalloc((void**)&d_sum, m_h * m_w * sizeof(float));
+		cudaMalloc((void**)&d_valid, m_h * m_w * sizeof(float));
+		cudaMallocHost((void**)&h_sum, m_h * m_w * sizeof(float));
+		cudaMallocHost((void**)&h_valid, m_h * m_w * sizeof(float));
 
 		preprocess(camera, sinTilt, cosTilt);
 		// this line can be earsed forever cudaMalloc((void **)&d_disparity_columns, m_h * m_w * sizeof(float));
@@ -255,9 +283,12 @@ private:
 	float *d_disparity_colReduced;
 	float *d_disparity_columns;
 	float *d_groundDisp;
+	float *d_sum, *d_valid;
 
+	float *h_groundDisp;
 	float *h_disparity_original;
 	float *h_disparity_colReduced;
+	float *h_sum, *h_valid;
 	float *data;
 
 	gpuNegativeLogDataTermGrd m_dataTermG;

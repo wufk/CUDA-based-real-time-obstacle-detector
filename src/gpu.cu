@@ -8,6 +8,25 @@ inline static unsigned divup(unsigned n, unsigned div)
 	return (n + div - 1) / div;
 }
 
+struct is_less_than_zero
+{
+	__host__ __device__
+		bool operator()(float x)
+	{
+		return x < 0.f;
+	}
+};
+
+struct is_larger_than_zero
+{
+	__host__ __device__
+		bool operator()(float x)
+	{
+		return x >= 0.f;
+	}
+};
+
+
 void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& stixels)
 {
 	CV_Assert(disparity.type() == CV_32F);
@@ -28,8 +47,8 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 		exit(1);
 	}
 
-	cudaMemcpy(h_disparity_original, h_disparity, m_rows * m_cols * sizeof(float), cudaMemcpyHostToHost);
-	//cudaMemcpy(d_disparity_original, h_disparity, m_rows * m_cols * sizeof(float), cudaMemcpyHostToDevice);
+	//cudaMemcpy(h_disparity_original, h_disparity, m_rows * m_cols * sizeof(float), cudaMemcpyHostToHost);
+	cudaMemcpy(d_disparity_original, h_disparity, m_rows * m_cols * sizeof(float), cudaMemcpyHostToDevice);
 
 	dim3 dimBlock(BLOCKSIZE, BLOCKSIZE, 1);
 	int r = divup(h, BLOCKSIZE); int c = divup(w, BLOCKSIZE);
@@ -44,8 +63,9 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	//cudaMemcpy(data, d_disparity_columns, h * w * sizeof(float), cudaMemcpyDeviceToHost);
 	//cv::Mat columns = cv::Mat(w, h, CV_32F, data);
 
-	/* zero cpy for colReduced */
 	columnReduction << <dimGrid, dimBlock >> > (d_disparity_original, d_disparity_colReduced, stixelWidth, m_rows, m_cols, m_w);
+	/* if zero cpy for colReduced, comment the next line */
+	cudaMemcpy(h_disparity_colReduced, d_disparity_colReduced, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
 
 
 	/* for debug */
@@ -86,26 +106,94 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	//kernComputeGroundDisp << <divup(h, 32), 32 >> > (d_groundDisp, h, 
 	//	camera.baseline, camera.height, camera.fu, camera.v0, sinTilt, cosTilt);
 	
-	float *h_groundDisp = new float[h];
-	cudaMemcpy(h_groundDisp, d_groundDisp, h * sizeof(float), cudaMemcpyDeviceToHost);
-	std::vector<float> groundDisparity(h_groundDisp, h_groundDisp + h);
+	// This is oridinary without zero copy
+	//float *h_groundDisp = new float[h];
+	//cudaMemcpy(h_groundDisp, d_groundDisp, h * sizeof(float), cudaMemcpyDeviceToHost);
+	//std::vector<float> groundDisparity(h_groundDisp, h_groundDisp + h);
+
+	/* This is cpu */
 	//std::vector<float> groundDisparity(h);
 	//for (int v = 0; v < h; v++) {
 	//	groundDisparity[h - 1 - v] = std::max((camera.baseline / camera.height) * (camera.fu * sinTilt + (v - camera.v0) * cosTilt), 0.f);
 	//}
-	const float vhor = h - 1 - (camera.v0 * cosTilt - camera.fu * sinTilt) / cosTilt;
+	//const float m_vhor = h - 1 - (camera.v0 * cosTilt - camera.fu * sinTilt) / cosTilt;
 
 	//gpuNegativeLogDataTermGrd dataTermG(param_.dmax, param_.dmin, param_.sigmaG, param_.pOutG, param_.pInvG, camera,
-	//	d_groundDisp, vhor, param_.sigmaH, param_.sigmaA, h);
+	//	d_groundDisp, m_vhor, param_.sigmaH, param_.sigmaA, h);
 	//gpuNegativeLogDataTermObj dataTermO(param_.dmax, param_.dmin, param_.sigmaO, param_.pOutO, param_.pInvO, camera, param_.deltaz);
 	//gpuNegativeLogDataTermSky dataTermS(param_.dmax, param_.dmin, param_.sigmaS, param_.pOutS, param_.pInvS);
 
 	const int G = gpuNegativeLogPriorTerm::G;
 	const int O = gpuNegativeLogPriorTerm::O;
 	const int S = gpuNegativeLogPriorTerm::S;
-	gpuNegativeLogPriorTerm priorTerm(h, vhor, param_.dmax, param_.dmin, camera.baseline, camera.fu, param_.deltaz,
-		param_.eps, param_.pOrd, param_.pGrav, param_.pBlg, groundDisparity);
+	gpuNegativeLogPriorTerm priorTerm(h, m_vhor, param_.dmax, param_.dmin, camera.baseline, camera.fu, param_.deltaz,
+		param_.eps, param_.pOrd, param_.pGrav, param_.pBlg, h_groundDisp);
 
+	m_dataTermG.computeCostsG(d_disparity_colReduced);
+	m_dataTermS.computeCostsS(d_disparity_colReduced);
+	m_dataTermO.computeCostsO(d_disparity_colReduced);
+
+	cudaMemcpy(d_sum, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice);
+	cudaMemcpy(d_valid, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice);
+	is_less_than_zero less;
+	is_larger_than_zero large;
+	thrust::device_ptr<float> thrust_d_sum(d_sum);
+	thrust::device_ptr<float> thrust_d_valid(d_valid);
+	thrust::replace_if(thrust::device, thrust_d_sum, thrust_d_sum + m_w * m_h, less, 0);
+	thrust::replace_if(thrust::device, thrust_d_valid, thrust_d_valid + m_w * m_h, large, 1);
+	thrust::replace_if(thrust::device, thrust_d_valid, thrust_d_valid + m_w * m_h, less, 0);
+
+	dimGrid = dim3(divup(m_w, BLOCKSIZE));
+	kernScanCosts << <dimGrid, BLOCKSIZE >> > (m_w, m_h, d_sum);
+	kernScanCosts << <dimGrid, BLOCKSIZE >> > (m_w, m_h, d_valid);
+	cudaMemcpy(h_sum, d_sum, m_w * m_h * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_valid, d_valid, m_w * m_h * sizeof(float), cudaMemcpyDeviceToHost);
+
+	/* This is test
+	//for (int u = 0; u < w; u++) {
+	//	float tmpSumG = 0.f;
+	//	std::vector<float> tmpSumO(fnmax, 0.f);
+	//	float tmpSum = 0.f;
+	//	int tmpValid = 0;
+
+	//	for (int v = 0; v < h; v++) {
+	//		const float d = h_disparity_colReduced[u * h + v];
+	//		if (d >= 0.f) {
+	//			tmpSum += d;
+	//			tmpValid++;
+	//		}
+	//		int n = u * m_h + v;
+	//		//if (tmpValid - h_valid[n] > 0.01 || h_valid[n] - tmpValid > 0.01) {
+	//		//	std::cout <<u << "," << v <<":"<< tmpValid << " " << h_valid[n] << std::endl;
+	//		//}
+
+	//		//if (tmpSum - h_sum[n] > 0.01 || h_sum[n] - tmpSum > 0.01)
+	//		//	std::cout << tmpSum << "  " << h_sum[n] << std::endl;
+
+	//		//for (int f = 0; f < fnmax; f++) {
+	//		//	float incre = m_dataTermO(d, f);
+	//		//	tmpSumO[f] += incre;
+	//		//	// below is u * fnamx * v. which is correct 
+	//		//	//int index = u * h * fnmax + f * h + v;
+	//		//	//if (m_dataTermO.h_costsO[index] - incre > 0.1 || m_dataTermO.h_costsO[index] - incre < -0.1)
+	//		//	//	std::cout << index << ": " << incre << " " << m_dataTermO.h_costsO[index] << std::endl;
+	//		//	//if (m_dataTermO.h_costsO[index] - tmpSumO[f] > 0.1 || m_dataTermO.h_costsO[index] - tmpSumO[f] < -0.1)
+	//		//	//if (m_dataTermO.h_costsO[index] > 0 && tmpSumO[f] > 0)
+	//		//	//	std::cout << index << ": " << tmpSumO[f] << " " << m_dataTermO.h_costsO[index] << std::endl;
+
+	//		//	// below is u * v * fnmax. which is not correct
+	//		//	//int index = u * h * fnmax + v * fnmax + f;
+	//		//	//if (m_dataTermO.h_costsO[index] - incre > 0.1)
+	//		//	//	std::cout << index << ": " << incre << " " << m_dataTermO.h_costsO[index] << std::endl;
+	//		//	//if (m_dataTermO.h_costsO[index] - tmpSumO[f] > 0.1)
+	//		//	//	std::cout << u <<","<<v<<","<<fnmax << ": " << tmpSumO[f] << " " << m_dataTermO.h_costsO[index] << std::endl;
+	//		//	//float incre = m_dataTermS(d);
+	//		//	//tmpSumG += incre;
+	//		//	//std::cout << tmpSumG << " " << m_dataTermS.h_costsS[u * h + v] << std::endl;
+	//		//}
+	//	}
+	//}
+	*/
 
 	// data cost LUT
 	Matrixf costsG(w, h), costsO(w, h, fnmax), costsS(w, h), sum(w, h);
@@ -192,9 +280,9 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 				const int fn = cvRound(d1);
 
 				// compute data terms costs
-				const float dataCostG = vT < vhor ? costsG(u, vT) - costsG(u, vB - 1) : N_LOG_0_0;
+				const float dataCostG = vT < m_vhor ? costsG(u, vT) - costsG(u, vB - 1) : N_LOG_0_0;
 				const float dataCostO = costsO(u, vT, fn) - costsO(u, vB - 1, fn);
-				const float dataCostS = vT < vhor ? N_LOG_0_0 : costsS(u, vT) - costsS(u, vB - 1);
+				const float dataCostS = vT < m_vhor ? N_LOG_0_0 : costsS(u, vT) - costsS(u, vB - 1);
 
 				// compute priors costs and update costs
 				const float d2 = dispTable(u, vB - 1, 1);
@@ -274,15 +362,22 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 void gpuStixelWorld::preprocess(const CameraParameters & camera, float sinTilt, float cosTilt)
 {
 	const auto t1 = std::chrono::system_clock::now();
-	d_groundDisp = nullptr;
-	cudaMalloc((void**)&d_groundDisp, m_h * sizeof(float));
+	// THis is ordinary methods
+	//d_groundDisp = nullptr;
+	//cudaMalloc((void**)&d_groundDisp, m_h * sizeof(float));
+
+	// This is zero copy
+	cudaSetDeviceFlags(cudaDeviceMapHost);
+	cudaHostAlloc((void**)&h_groundDisp, m_h * sizeof(float), cudaHostAllocMapped);
+	cudaHostGetDevicePointer((void**)&d_groundDisp, (void *)h_groundDisp, 0);
+
 	kernComputeGroundDisp << <divup(m_h, BLOCKSIZE), BLOCKSIZE >> > (d_groundDisp, m_h,
 		camera.baseline, camera.height, camera.fu, camera.v0, sinTilt, cosTilt);
 
 	m_dataTermG = gpuNegativeLogDataTermGrd(param_.dmax, param_.dmin, param_.sigmaG, param_.pOutG, param_.pInvG, camera,
-		d_groundDisp, m_vhor, param_.sigmaH, param_.sigmaA, m_h);
-	m_dataTermO = gpuNegativeLogDataTermObj(param_.dmax, param_.dmin, param_.sigmaO, param_.pOutO, param_.pInvO, camera, param_.deltaz);
-	m_dataTermS = gpuNegativeLogDataTermSky(param_.dmax, param_.dmin, param_.sigmaS, param_.pOutS, param_.pInvS);
+		d_groundDisp, m_vhor, param_.sigmaH, param_.sigmaA, m_h, m_w);
+	m_dataTermO = gpuNegativeLogDataTermObj(param_.dmax, param_.dmin, param_.sigmaO, param_.pOutO, param_.pInvO, camera, param_.deltaz, m_w, m_h);
+	m_dataTermS = gpuNegativeLogDataTermSky(param_.dmax, param_.dmin, param_.sigmaS, param_.pOutS, param_.pInvS, m_w, m_h);
 
 	const auto t2 = std::chrono::system_clock::now();
 	const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
@@ -293,8 +388,14 @@ void gpuStixelWorld::destroy()
 {
 	cudaFree(d_disparity_original);
 	cudaFree(h_disparity_colReduced);
+	cudaFree(h_groundDisp);
 	//cudaFree(d_disparity_columns);
 	cudaFree(d_groundDisp);
+	cudaFree(d_sum);
+	cudaFree(d_valid);
+
+	cudaFree(h_sum);
+	cudaFree(h_valid);
 	delete[] data;
 
 	//cudaFree(d_disparity_colReduced);
@@ -303,61 +404,102 @@ void gpuStixelWorld::destroy()
 
 void gpuNegativeLogDataTermGrd::init(float dmax, float dmin, float sigmaD, 
 	float pOut, float pInv, const CameraParameters & camera, 
-	float* d_groundDisparity, float vhor, float sigmaH, float sigmaA, int h)
+	float* d_groundDisparity, float m_vhor, float sigmaH, float sigmaA, int h)
 {
 	// uniform distribution term
 	nLogPUniform_ = logf(dmax - dmin) - logf(pOut);
 	const float cf = camera.fu * camera.baseline / camera.height;
 
-	//h_nLogPGaussian_ = new float[h];
-	//h_fn_ = new float[h];
-	//h_cquad_ = new float[h];
-	//cudaMalloc((void**)&d_cquad_, h * sizeof(float));
-	//cudaMalloc((void**)&d_fn_, h * sizeof(float));
-	//cudaMalloc((void**)&d_nLogPGaussian_, h * sizeof(float));
+	h_nLogPGaussian_ = new float[h];
+	h_fn_ = new float[h];
+	h_cquad_ = new float[h];
+	h_costsG = new float[m_w * m_h];
+	cudaMalloc((void**)&d_cquad_, h * sizeof(float));
+	cudaMalloc((void**)&d_fn_, h * sizeof(float));
+	cudaMalloc((void**)&d_nLogPGaussian_, h * sizeof(float));
+	cudaMalloc((void**)&d_costsG, m_w * m_h * sizeof(float));
 
 	/* this is for zero copy */
-	cudaSetDeviceFlags(cudaDeviceMapHost);
-	cudaHostAlloc((void**)&h_nLogPGaussian_, h * sizeof(float), cudaHostAllocMapped);
-	cudaHostAlloc((void**)&h_cquad_, h * sizeof(float), cudaHostAllocMapped);
-	cudaHostAlloc((void**)&h_fn_, h * sizeof(float), cudaHostAllocMapped);
-	cudaHostGetDevicePointer((void**)&d_nLogPGaussian_, (void *)h_nLogPGaussian_, 0);
-	cudaHostGetDevicePointer((void**)&d_cquad_, (void *)h_cquad_, 0);
-	cudaHostGetDevicePointer((void**)&d_fn_, (void *)h_fn_, 0);
+	//cudaSetDeviceFlags(cudaDeviceMapHost);
+	//cudaHostAlloc((void**)&h_nLogPGaussian_, h * sizeof(float), cudaHostAllocMapped);
+	//cudaHostAlloc((void**)&h_cquad_, h * sizeof(float), cudaHostAllocMapped);
+	//cudaHostAlloc((void**)&h_fn_, h * sizeof(float), cudaHostAllocMapped);
+	//cudaHostGetDevicePointer((void**)&d_nLogPGaussian_, (void *)h_nLogPGaussian_, 0);
+	//cudaHostGetDevicePointer((void**)&d_cquad_, (void *)h_cquad_, 0);
+	//cudaHostGetDevicePointer((void**)&d_fn_, (void *)h_fn_, 0);
+	//cudaHostAlloc((void**)&h_costsG, m_h * m_w * sizeof(float), cudaHostAllocMapped);
+	//cudaHostGetDevicePointer((void**)&d_costsG, (void *)h_costsG, 0);
+
 
 	dim3 dimBlock(divup(h, BLOCKSIZE));
 	kernComputeNegativeLogDataTermGrd << <dimBlock,BLOCKSIZE >> > (h, d_groundDisparity, d_nLogPGaussian_, d_fn_, d_cquad_,
-		camera.fv, camera.tilt, camera.height, cf, sigmaA, sigmaH, sigmaD, dmax, dmin, SQRT2, PI, pOut, vhor);
+		camera.fv, camera.tilt, camera.height, cf, sigmaA, sigmaH, sigmaD, dmax, dmin, SQRT2, PI, pOut, m_vhor);
 
-	//cudaMemcpy(h_nLogPGaussian_, d_nLogPGaussian_, h * sizeof(float), cudaMemcpyDeviceToHost);
-	//cudaMemcpy(h_fn_, d_fn_, h * sizeof(float), cudaMemcpyDeviceToHost);
-	//cudaMemcpy(h_cquad_, d_cquad_, h * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_nLogPGaussian_, d_nLogPGaussian_, h * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_fn_, d_fn_, h * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_cquad_, d_cquad_, h * sizeof(float), cudaMemcpyDeviceToHost);
+}
+
+void gpuNegativeLogDataTermGrd::computeCostsG(float* d_disp_colReduced)
+{	
+	int r = divup(m_w, BLOCKSIZE); int c = divup(m_h, BLOCKSIZE);
+	dim3 dimGrid(r, c, 1);
+	dim3 dimBlock(BLOCKSIZE, BLOCKSIZE, 1);
+	kernComputeCostsG << <dimGrid, dimBlock >> > (m_w, m_h, nLogPUniform_, d_costsG, d_nLogPGaussian_, d_cquad_, d_fn_, d_disp_colReduced);
+	dimGrid = dim3(divup(m_w, BLOCKSIZE));
+	kernScanCosts << <dimGrid, BLOCKSIZE >> > (m_w, m_h, d_costsG);
+
+	cudaMemcpy(h_costsG, d_costsG, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
 }
 
 void gpuNegativeLogDataTermGrd::destroy()
 {
-	cudaFree(h_nLogPGaussian_);
-	cudaFree(h_cquad_);
-	cudaFree(h_fn_);
+	//cudaFree(h_costsG);
+	//cudaFree(h_nLogPGaussian_);
+	//cudaFree(h_cquad_);
+	//cudaFree(h_fn_);
 
 
-	//cudaFree(d_nLogPGaussian_);
-	//cudaFree(d_cquad_);
-	//cudaFree(d_fn_);
-	//delete[] h_nLogPGaussian_;
-	//delete[] h_fn_;
-	//delete[] h_cquad_;
+	cudaFree(d_nLogPGaussian_);
+	cudaFree(d_cquad_);
+	cudaFree(d_fn_);
+	cudaFree(d_costsG);
+	delete[] h_nLogPGaussian_;
+	delete[] h_fn_;
+	delete[] h_cquad_;
+	delete[] h_costsG;
 }
+
+
+void gpuNegativeLogDataTermObj::computeCostsO(float * d_disp_colReduced)
+{
+	int r = divup(m_w, 8); int c = divup(m_h, 8); int t = divup(fnmax, 8);
+	//dim3 dimGrid(r, c, t);
+	//dim3 dimBlock(8, 8, 8);
+	//kernComputeCostsO << <dimGrid, dimBlock >> > (m_w, m_h, fnmax, d_costsO, d_disp_colReduced, d_nLogPGaussian_, d_cquad_, nLogPUniform_);
+	//dimGrid = dim3(divup(m_w, BLOCKSIZE), divup(m_h, BLOCKSIZE), 1);
+	//dimBlock = dim3(BLOCKSIZE, BLOCKSIZE);
+	//kernScanCostsObj << <dimGrid, dimBlock >> > (m_w, m_h, fnmax, d_costsO);
+
+	dim3 dimGrid(r, t, c);
+	dim3 dimBlock(8, 8, 8);
+	kernComputeCostsOO << <dimGrid, dimBlock >> > (m_w, fnmax, m_h, d_costsO, d_disp_colReduced, d_nLogPGaussian_, d_cquad_, nLogPUniform_);
+	dimGrid = dim3(divup(m_w, BLOCKSIZE), divup(fnmax, BLOCKSIZE), 1);
+	dimBlock = dim3(BLOCKSIZE, BLOCKSIZE);
+	kernScanCostsObj << <dimGrid, dimBlock >> > (m_w, fnmax, m_h, d_costsO);
+
+	cudaMemcpy(h_costsO, d_costsO, m_h * m_w * fnmax * sizeof(float), cudaMemcpyDeviceToHost);}
 
 void gpuNegativeLogDataTermObj::destroy()
 {
-	//cudaFree(d_nLogPGaussian_);
-	//cudaFree(d_cquad_);
-	//delete[] h_nLogPGaussian_;
-	//delete[] h_cquad_;
+	cudaFree(d_nLogPGaussian_);
+	cudaFree(d_cquad_);
+	cudaFree(d_costsO);
+	delete[] h_nLogPGaussian_;
+	delete[] h_cquad_;
 
-	cudaFree(h_nLogPGaussian_);
-	cudaFree(h_cquad_);
+	//cudaFree(h_nLogPGaussian_);
+	//cudaFree(h_cquad_);
 }
 
 void gpuNegativeLogDataTermObj::init(float dmax, float dmin, float sigmaD, float pOut, float pInv, const CameraParameters & camera, float deltaz)
@@ -365,31 +507,26 @@ void gpuNegativeLogDataTermObj::init(float dmax, float dmin, float sigmaD, float
 	// uniform distribution term
 	nLogPUniform_ = logf(dmax - dmin) - logf(pOut);
 
-	// Gaussian distribution term
-	const int fnmax = static_cast<int>(dmax);
-
-
-	//h_nLogPGaussian_ = new float[fnmax];
-	//h_cquad_ = new float[fnmax];
-	//cudaMalloc((void**)&d_cquad_, fnmax * sizeof(float));
-	//cudaMalloc((void**)&d_nLogPGaussian_, fnmax * sizeof(float));
+	h_nLogPGaussian_ = new float[fnmax];
+	h_cquad_ = new float[fnmax];
+	h_costsO = new float[m_w * m_h * fnmax];
+	cudaMalloc((void**)&d_cquad_, fnmax * sizeof(float));
+	cudaMalloc((void**)&d_nLogPGaussian_, fnmax * sizeof(float));
+	cudaMalloc((void**)&d_costsO, m_w * m_h * fnmax * sizeof(float));
 
 	/* this is for zero copy */
-	cudaSetDeviceFlags(cudaDeviceMapHost);
-
-	cudaHostAlloc((void**)&h_nLogPGaussian_, fnmax * sizeof(float), cudaHostAllocMapped);
-	cudaHostAlloc((void**)&h_cquad_, fnmax * sizeof(float), cudaHostAllocMapped);
-
-	cudaHostGetDevicePointer((void**)&d_nLogPGaussian_, (void *)h_nLogPGaussian_, 0);
-	cudaHostGetDevicePointer((void**)&d_cquad_, (void *)h_cquad_, 0);
+	//cudaSetDeviceFlags(cudaDeviceMapHost);
+	//cudaHostAlloc((void**)&h_nLogPGaussian_, fnmax * sizeof(float), cudaHostAllocMapped);
+	//cudaHostAlloc((void**)&h_cquad_, fnmax * sizeof(float), cudaHostAllocMapped);
+	//cudaHostGetDevicePointer((void**)&d_nLogPGaussian_, (void *)h_nLogPGaussian_, 0);
+	//cudaHostGetDevicePointer((void**)&d_cquad_, (void *)h_cquad_, 0);
 
 	dim3 dimBlock(divup(fnmax, BLOCKSIZE));
 	kernComputeNegativeLogDataTermObj << <dimBlock, BLOCKSIZE >> > (fnmax, d_cquad_, d_nLogPGaussian_,
 		camera.fu, camera.baseline, sigmaD, deltaz, SQRT2, PI, pOut, dmin, dmax);
 
-
-	//cudaMemcpy(h_nLogPGaussian_, d_nLogPGaussian_, fnmax * sizeof(float), cudaMemcpyDeviceToHost);
-	//cudaMemcpy(h_cquad_, d_cquad_, fnmax * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_nLogPGaussian_, d_nLogPGaussian_, fnmax * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_cquad_, d_cquad_, fnmax * sizeof(float), cudaMemcpyDeviceToHost);
 }
 
 void gpuNegativeLogDataTermSky::init(float dmax, float dmin, float sigmaD, float pOut, float pInv, float fn)
@@ -403,9 +540,29 @@ void gpuNegativeLogDataTermSky::init(float dmax, float dmin, float sigmaD, float
 
 	// coefficient of quadratic part
 	cquad_ = 1.f / (2.f * sigmaD * sigmaD);
+
+	cudaMalloc((void**)&d_costsS, m_h * m_w * sizeof(float));
+	h_costsS = new float[m_h * m_w];
 }
 
-void gpuNegativeLogPriorTerm::init(int h, float vhor, float dmax, float dmin, float b, float fu, float deltaz, float eps, float pOrd, float pGrav, float pBlg, const std::vector<float>& groundDisparity)
+void gpuNegativeLogDataTermSky::destroy()
+{
+	cudaFree(d_costsS);
+	delete[] h_costsS;
+}
+
+void gpuNegativeLogDataTermSky::computeCostsS(float *d_disparity_colReduced)
+{
+	int r = divup(m_w, BLOCKSIZE); int c = divup(m_h, BLOCKSIZE);
+	dim3 dimGrid(r, c, 1);
+	dim3 dimBlock(BLOCKSIZE, BLOCKSIZE, 1);
+	kernComputeCostsS << <dimGrid, dimBlock >> > (m_w, m_h, d_costsS, d_disparity_colReduced, nLogPUniform_, cquad_, nLogPGaussian_, fn_);
+	dimGrid = dim3(divup(m_w, BLOCKSIZE));
+	kernScanCosts << <dimGrid, BLOCKSIZE >> > (m_w, m_h, d_costsS);
+	cudaMemcpy(h_costsS, d_costsS, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
+}
+
+void gpuNegativeLogPriorTerm::init(int h, float m_vhor, float dmax, float dmin, float b, float fu, float deltaz, float eps, float pOrd, float pGrav, float pBlg, float* groundDisparity)
 
 {
 	const int fnmax = static_cast<int>(dmax);
@@ -421,8 +578,8 @@ void gpuNegativeLogPriorTerm::init(int h, float vhor, float dmax, float dmin, fl
 	{
 		const float P1 = N_LOG_1_0;
 		const float P2 = -logf(1.f / h);
-		const float P3_O = vT > vhor ? N_LOG_1_0 : N_LOG_0_5;
-		const float P3_G = vT > vhor ? N_LOG_0_0 : N_LOG_0_5;
+		const float P3_O = vT > m_vhor ? N_LOG_1_0 : N_LOG_0_5;
+		const float P3_G = vT > m_vhor ? N_LOG_0_0 : N_LOG_0_5;
 		const float P4_O = -logf(1.f / (dmax - dmin));
 		const float P4_G = N_LOG_1_0;
 
@@ -435,17 +592,17 @@ void gpuNegativeLogPriorTerm::init(int h, float vhor, float dmax, float dmin, fl
 		const float P1 = N_LOG_1_0;
 		const float P2 = -logf(1.f / (h - vB));
 
-		const float P3_O_O = vB - 1 < vhor ? N_LOG_0_7 : N_LOG_0_5;
-		const float P3_G_O = vB - 1 < vhor ? N_LOG_0_3 : N_LOG_0_0;
-		const float P3_S_O = vB - 1 < vhor ? N_LOG_0_0 : N_LOG_0_5;
+		const float P3_O_O = vB - 1 < m_vhor ? N_LOG_0_7 : N_LOG_0_5;
+		const float P3_G_O = vB - 1 < m_vhor ? N_LOG_0_3 : N_LOG_0_0;
+		const float P3_S_O = vB - 1 < m_vhor ? N_LOG_0_0 : N_LOG_0_5;
 
-		const float P3_O_G = vB - 1 < vhor ? N_LOG_0_7 : N_LOG_0_0;
-		const float P3_G_G = vB - 1 < vhor ? N_LOG_0_3 : N_LOG_0_0;
-		const float P3_S_G = vB - 1 < vhor ? N_LOG_0_0 : N_LOG_0_0;
+		const float P3_O_G = vB - 1 < m_vhor ? N_LOG_0_7 : N_LOG_0_0;
+		const float P3_G_G = vB - 1 < m_vhor ? N_LOG_0_3 : N_LOG_0_0;
+		const float P3_S_G = vB - 1 < m_vhor ? N_LOG_0_0 : N_LOG_0_0;
 
-		const float P3_O_S = vB - 1 < vhor ? N_LOG_0_0 : N_LOG_1_0;
-		const float P3_G_S = vB - 1 < vhor ? N_LOG_0_0 : N_LOG_0_0;
-		const float P3_S_S = vB - 1 < vhor ? N_LOG_0_0 : N_LOG_0_0;
+		const float P3_O_S = vB - 1 < m_vhor ? N_LOG_0_0 : N_LOG_1_0;
+		const float P3_G_S = vB - 1 < m_vhor ? N_LOG_0_0 : N_LOG_0_0;
+		const float P3_S_S = vB - 1 < m_vhor ? N_LOG_0_0 : N_LOG_0_0;
 
 		costs1_(vB, O, O) = P1 + P2 + P3_O_O;
 		costs1_(vB, G, O) = P1 + P2 + P3_G_O;
