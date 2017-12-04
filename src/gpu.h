@@ -152,10 +152,16 @@ public:
 	static const int O = 1;
 	static const int S = 2;
 
+	gpuNegativeLogPriorTerm() {
+
+	}
+
 	gpuNegativeLogPriorTerm(int h, float vhor, float dmax, float dmin, float b, float fu, float deltaz, float eps,
-		float pOrd, float pGrav, float pBlg, float* groundDisparity)
+		float pOrd, float pGrav, float pBlg, float* h_groundDisparity)
 	{
-		init(h, vhor, dmax, dmin, b, fu, deltaz, eps, pOrd, pGrav, pBlg, groundDisparity);
+		fnmax = static_cast<int>(dmax);
+		m_h = h;
+		init(h, vhor, dmax, dmin, b, fu, deltaz, eps, pOrd, pGrav, pBlg, h_groundDisparity);
 	}
 
 	inline float getO0(int vT) const
@@ -211,10 +217,17 @@ public:
 	}
 
 	void init(int h, float vhor, float dmax, float dmin, float b, float fu, float deltaz, float eps,
-		float pOrd, float pGrav, float pBlg, float* groundDisparity);
+		float pOrd, float pGrav, float pBlg, float* h_groundDisparity);
+	void destroy();
 
 	Matrixf costs0_, costs1_;
 	Matrixf costs2_O_O_, costs2_O_G_, costs2_O_S_, costs2_S_O_;
+
+	int m_h, m_w;
+	int fnmax;
+
+	float *d_costs0_, *d_costs1_;
+	float *d_costs2_O_O_, *d_costs2_O_G_, *d_costs2_O_S_, *d_costs2_S_O_;
 };
 
 class gpuStixelWorld : StixelWorld {
@@ -259,6 +272,30 @@ public:
 		cudaMallocHost((void**)&h_sum, m_h * m_w * sizeof(float));
 		cudaMallocHost((void**)&h_valid, m_h * m_w * sizeof(float));
 
+		cudaMalloc((void**)&d_costTableG, m_h * m_w * sizeof(float));
+		cudaMalloc((void**)&d_costTableS, m_h * m_w * sizeof(float));
+		cudaMalloc((void**)&d_costTableO, m_h * m_w * sizeof(float));
+
+		cudaMalloc((void**)&d_dispTableG, m_h * m_w * sizeof(float));
+		cudaMalloc((void**)&d_dispTableS, m_h * m_w * sizeof(float));
+		cudaMalloc((void**)&d_dispTableO, m_h * m_w * sizeof(float));
+
+		cudaMalloc((void**)&d_indexTableG, m_h * m_w * sizeof(glm::vec2));
+		cudaMalloc((void**)&d_indexTableS, m_h * m_w * sizeof(glm::vec2));
+		cudaMalloc((void**)&d_indexTableO, m_h * m_w * sizeof(glm::vec2));
+
+		cudaMallocHost((void**)&h_costTableG, m_h * m_w * sizeof(float));
+		cudaMallocHost((void**)&h_costTableS, m_h * m_w * sizeof(float));
+		cudaMallocHost((void**)&h_costTableO, m_h * m_w * sizeof(float));
+
+		cudaMallocHost((void**)&h_dispTableG, m_h * m_w * sizeof(float));
+		cudaMallocHost((void**)&h_dispTableS, m_h * m_w * sizeof(float));
+		cudaMallocHost((void**)&h_dispTableO, m_h * m_w * sizeof(float));
+
+		cudaMallocHost((void**)&h_indexTableG, m_h * m_w * sizeof(glm::vec2));
+		cudaMallocHost((void**)&h_indexTableS, m_h * m_w * sizeof(glm::vec2));
+		cudaMallocHost((void**)&h_indexTableO, m_h * m_w * sizeof(glm::vec2));
+
 		preprocess(camera, sinTilt, cosTilt);
 		// this line can be earsed forever cudaMalloc((void **)&d_disparity_columns, m_h * m_w * sizeof(float));
 	}
@@ -284,14 +321,21 @@ private:
 	float *d_disparity_columns;
 	float *d_groundDisp;
 	float *d_sum, *d_valid;
+	float *d_costTableG, *d_costTableO, *d_costTableS;
+	float *d_dispTableG, *d_dispTableO, *d_dispTableS;
+	glm::vec2 *d_indexTableG, *d_indexTableO, *d_indexTableS;
 
 	float *h_groundDisp;
 	float *h_disparity_original;
 	float *h_disparity_colReduced;
 	float *h_sum, *h_valid;
+	float *h_costTableG, *h_costTableO, *h_costTableS;
+	float *h_dispTableG, *h_dispTableO, *h_dispTableS;
+	glm::vec2 *h_indexTableG, *h_indexTableO, *h_indexTableS;
 	float *data;
 
 	gpuNegativeLogDataTermGrd m_dataTermG;
 	gpuNegativeLogDataTermObj m_dataTermO;
 	gpuNegativeLogDataTermSky m_dataTermS;
+	gpuNegativeLogPriorTerm m_priorTerm;
 };

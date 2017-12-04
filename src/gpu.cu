@@ -67,7 +67,6 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	/* if zero cpy for colReduced, comment the next line */
 	cudaMemcpy(h_disparity_colReduced, d_disparity_colReduced, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
 
-
 	/* for debug */
 	//float *tmp_colums = new float[h * w];
 	//cudaMemcpy(tmp_colums, d_disparity_colReduced, h * w * sizeof(float), cudaMemcpyDeviceToHost);
@@ -126,8 +125,8 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	const int G = gpuNegativeLogPriorTerm::G;
 	const int O = gpuNegativeLogPriorTerm::O;
 	const int S = gpuNegativeLogPriorTerm::S;
-	gpuNegativeLogPriorTerm priorTerm(h, m_vhor, param_.dmax, param_.dmin, camera.baseline, camera.fu, param_.deltaz,
-		param_.eps, param_.pOrd, param_.pGrav, param_.pBlg, h_groundDisp);
+	/*gpuNegativeLogPriorTerm priorTerm(h, m_vhor, param_.dmax, param_.dmin, camera.baseline, camera.fu, param_.deltaz,
+		param_.eps, param_.pOrd, param_.pGrav, param_.pBlg, h_groundDisp);*/
 
 	m_dataTermG.computeCostsG(d_disparity_colReduced);
 	m_dataTermS.computeCostsS(d_disparity_colReduced);
@@ -195,6 +194,74 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	//}
 	*/
 
+	KernDP << <m_w, m_h >> > (m_w, m_h, fnmax, d_disparity_colReduced, d_sum, d_valid,
+		m_dataTermG.d_costsG, m_dataTermO.d_costsO, m_dataTermS.d_costsS, 
+		d_costTableG, d_costTableO, d_costTableS, d_dispTableG, d_dispTableO, d_dispTableS, d_indexTableG, d_indexTableO, d_indexTableS,
+		m_priorTerm.d_costs0_, m_priorTerm.d_costs1_, m_priorTerm.d_costs2_O_G_, m_priorTerm.d_costs2_O_O_, m_priorTerm.d_costs2_O_S_, m_priorTerm.d_costs2_S_O_,
+		N_LOG_0_0, m_vhor
+	);
+
+	cudaMemcpy(h_costTableG, d_costTableG, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_costTableS, d_costTableS, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_costTableO, d_costTableO, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
+
+	cudaMemcpy(h_dispTableG, d_dispTableG, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_dispTableO, d_dispTableO, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_dispTableS, d_dispTableS, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
+
+	cudaMemcpy(h_indexTableG, d_indexTableG, m_h * m_w * sizeof(glm::vec2), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_indexTableO, d_indexTableO, m_h * m_w * sizeof(glm::vec2), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_indexTableS, d_indexTableS, m_h * m_w * sizeof(glm::vec2), cudaMemcpyDeviceToHost);
+
+	for (int u = 0; u < w; u++)
+	{
+		float minCost = std::numeric_limits<float>::max();
+		cv::Point minPos;
+		float cost = h_costTableG[u * m_h + h - 1];
+		if (cost < minCost) {
+			minCost = cost;
+			minPos = cv::Point(0, h - 1);
+		}
+		cost = h_costTableO[u * m_h + h - 1];
+		if (cost < minCost) {
+			minCost = cost;
+			minPos = cv::Point(1, h - 1);
+		}
+		cost = h_costTableS[u * m_h + h - 1];
+		if (cost < minCost) {
+			minCost = cost;
+			minPos = cv::Point(2, h - 1);
+		}
+		while (minPos.y > 0)
+		{
+			const cv::Point p1 = minPos;
+			cv::Point p2;
+			switch (p1.x) {
+			case 0:
+				p2 = cv::Point(h_indexTableG[u * m_h + p1.y].x, h_indexTableG[u * m_h + p1.y].y);
+				break;
+			case 1:
+				p2 = cv::Point(h_indexTableO[u * m_h + p1.y].x, h_indexTableO[u * m_h + p1.y].y);
+				break;
+			case 2:
+				p2 = cv::Point(h_indexTableS[u * m_h + p1.y].x, h_indexTableS[u * m_h + p1.y].y);
+				break;
+			}
+			if (p1.x == O) // object
+			{
+				Stixel stixel;
+				stixel.u = stixelWidth * u + stixelWidth / 2;
+				stixel.vT = h - 1 - p1.y;
+				stixel.vB = h - 1 - (p2.y + 1);
+				stixel.width = stixelWidth;
+				//stixel.disp = dispTable(u, p1.y, p1.x);
+				stixel.disp = h_dispTableG[u * m_h + p1.y];
+				stixels.push_back(stixel);
+			}
+			minPos = p2;
+		}
+	}
+	
 	// data cost LUT
 	Matrixf costsG(w, h), costsO(w, h, fnmax), costsS(w, h), sum(w, h);
 	Matrixi valid(w, h);
@@ -204,158 +271,232 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	Matrix<cv::Point> indexTable(w, h, 3);
 
 	// process each column
-	int u;
-
-	for (u = 0; u < w; u++)
-	{
-		//////////////////////////////////////////////////////////////////////////////
-		// pre-computate LUT
-		//////////////////////////////////////////////////////////////////////////////
-		float tmpSumG = 0.f;
-		float tmpSumS = 0.f;
-		std::vector<float> tmpSumO(fnmax, 0.f);
-
-		float tmpSum = 0.f;
-		int tmpValid = 0;
-
-		for (int v = 0; v < h; v++)
-		{
-			// measured disparity
-			//const float d = columns.at<float>(u, v);
-			//const float d = columns(u, v);
-			//const float d = data[u * h + v];
-			const float d = h_disparity_colReduced[u * h + v];
-
-			// pre-computation for ground costs
-			tmpSumG += m_dataTermG(d, v);
-			costsG(u, v) = tmpSumG;
-
-			// pre-computation for sky costs
-			tmpSumS += m_dataTermS(d);
-			costsS(u, v) = tmpSumS;
-
-			// pre-computation for object costs
-			for (int fn = 0; fn < fnmax; fn++)
-			{
-				tmpSumO[fn] += m_dataTermO(d, fn);
-				costsO(u, v, fn) = tmpSumO[fn];
-			}
-
-			// pre-computation for mean disparity of stixel
-			if (d >= 0.f)
-			{
-				tmpSum += d;
-				tmpValid++;
-			}
-			sum(u, v) = tmpSum;
-			valid(u, v) = tmpValid;
-		}
-
-		//////////////////////////////////////////////////////////////////////////////
-		// compute cost tables
-		//////////////////////////////////////////////////////////////////////////////
-		for (int vT = 0; vT < h; vT++)
-		{
-			float minCostG, minCostO, minCostS;
-			float minDispG, minDispO, minDispS;
-			cv::Point minPosG(G, 0), minPosO(O, 0), minPosS(S, 0);
-
-			// process vB = 0
-			{
-				// compute mean disparity within the range of vB to vT
-				const float d1 = sum(u, vT) / std::max(valid(u, vT), 1);
-				const int fn = cvRound(d1);
-
-				// initialize minimum costs
-				minCostG = costsG(u, vT) + priorTerm.getG0(vT);
-				minCostO = costsO(u, vT, fn) + priorTerm.getO0(vT);
-				minCostS = costsS(u, vT) + priorTerm.getS0(vT);
-				minDispG = minDispO = minDispS = d1;
-			}
-
-			for (int vB = 1; vB <= vT; vB++)
-			{
-				// compute mean disparity within the range of vB to vT
-				const float d1 = (sum(u, vT) - sum(u, vB - 1)) / std::max(valid(u, vT) - valid(u, vB - 1), 1);
-				const int fn = cvRound(d1);
-
-				// compute data terms costs
-				const float dataCostG = vT < m_vhor ? costsG(u, vT) - costsG(u, vB - 1) : N_LOG_0_0;
-				const float dataCostO = costsO(u, vT, fn) - costsO(u, vB - 1, fn);
-				const float dataCostS = vT < m_vhor ? N_LOG_0_0 : costsS(u, vT) - costsS(u, vB - 1);
-
-				// compute priors costs and update costs
-				const float d2 = dispTable(u, vB - 1, 1);
-
-#define UPDATE_COST(C1, C2) \
-				const float cost##C1##C2 = dataCost##C1 + priorTerm.get##C1##C2(vB, cvRound(d1), cvRound(d2)) + costTable(u, vB - 1, C2); \
-				if (cost##C1##C2 < minCost##C1) \
-				{ \
-					minCost##C1 = cost##C1##C2; \
-					minDisp##C1 = d1; \
-					minPos##C1 = cv::Point(C2, vB - 1); \
-				} \
-				
-				UPDATE_COST(G, G);
-				UPDATE_COST(G, O);
-				UPDATE_COST(G, S);
-				UPDATE_COST(O, G);
-				UPDATE_COST(O, O);
-				UPDATE_COST(O, S);
-				UPDATE_COST(S, G);
-				UPDATE_COST(S, O);
-				UPDATE_COST(S, S);
-				
-			}
-
-			costTable(u, vT, G) = minCostG;
-			costTable(u, vT, O) = minCostO;
-			costTable(u, vT, S) = minCostS;
-
-			dispTable(u, vT, G) = minDispG;
-			dispTable(u, vT, O) = minDispO;
-			dispTable(u, vT, S) = minDispS;
-
-			indexTable(u, vT, G) = minPosG;
-			indexTable(u, vT, O) = minPosO;
-			indexTable(u, vT, S) = minPosS;
-		}
-	}
-
-	//////////////////////////////////////////////////////////////////////////////
-	// backtracking step
-	//////////////////////////////////////////////////////////////////////////////
-	for (int u = 0; u < w; u++)
-	{
-		float minCost = std::numeric_limits<float>::max();
-		cv::Point minPos;
-		for (int c = 0; c < 3; c++)
-		{
-			const float cost = costTable(u, h - 1, c);
-			if (cost < minCost)
-			{
-				minCost = cost;
-				minPos = cv::Point(c, h - 1);
-			}
-		}
-
-		while (minPos.y > 0)
-		{
-			const cv::Point p1 = minPos;
-			const cv::Point p2 = indexTable(u, p1.y, p1.x);
-			if (p1.x == O) // object
-			{
-				Stixel stixel;
-				stixel.u = stixelWidth * u + stixelWidth / 2;
-				stixel.vT = h - 1 - p1.y;
-				stixel.vB = h - 1 - (p2.y + 1);
-				stixel.width = stixelWidth;
-				stixel.disp = dispTable(u, p1.y, p1.x);
-				stixels.push_back(stixel);
-			}
-			minPos = p2;
-		}
-	}
+//	int u;
+//
+//	for (u = 0; u < w; u++)
+//	{
+//		//////////////////////////////////////////////////////////////////////////////
+//		// pre-computate LUT
+//		//////////////////////////////////////////////////////////////////////////////
+//		float tmpSumG = 0.f;
+//		float tmpSumS = 0.f;
+//		std::vector<float> tmpSumO(fnmax, 0.f);
+//
+//		float tmpSum = 0.f;
+//		int tmpValid = 0;
+//
+//		for (int v = 0; v < h; v++)
+//		{
+//			// measured disparity
+//			//const float d = columns.at<float>(u, v);
+//			//const float d = columns(u, v);
+//			//const float d = data[u * h + v];
+//			const float d = h_disparity_colReduced[u * h + v];
+//
+//			// pre-computation for ground costs
+//			tmpSumG += m_dataTermG(d, v);
+//			costsG(u, v) = tmpSumG;
+//
+//			// pre-computation for sky costs
+//			tmpSumS += m_dataTermS(d);
+//			costsS(u, v) = tmpSumS;
+//
+//			// pre-computation for object costs
+//			for (int fn = 0; fn < fnmax; fn++)
+//			{
+//				tmpSumO[fn] += m_dataTermO(d, fn);
+//				costsO(u, v, fn) = tmpSumO[fn];
+//			}
+//
+//			// pre-computation for mean disparity of stixel
+//			if (d >= 0.f)
+//			{
+//				tmpSum += d;
+//				tmpValid++;
+//			}
+//			sum(u, v) = tmpSum;
+//			valid(u, v) = tmpValid;
+//		}
+//
+//		//////////////////////////////////////////////////////////////////////////////
+//		// compute cost tables
+//		//////////////////////////////////////////////////////////////////////////////
+//		for (int vT = 0; vT < h; vT++)
+//		{
+//			float minCostG, minCostO, minCostS;
+//			float minDispG, minDispO, minDispS;
+//			cv::Point minPosG(G, 0), minPosO(O, 0), minPosS(S, 0);
+//
+//			// process vB = 0
+//			{
+//				// compute mean disparity within the range of vB to vT
+//				const float d1 = sum(u, vT) / std::max(valid(u, vT), 1);
+//				const int fn = cvRound(d1);
+//
+//				// initialize minimum costs
+//				minCostG = costsG(u, vT) + m_priorTerm.getG0(vT);
+//				minCostO = costsO(u, vT, fn) + m_priorTerm.getO0(vT);
+//				minCostS = costsS(u, vT) + m_priorTerm.getS0(vT);
+//				minDispG = minDispO = minDispS = d1;
+//			}
+//
+//			for (int vB = 1; vB <= vT; vB++)
+//			{
+//				// compute mean disparity within the range of vB to vT
+//				const float d1 = (sum(u, vT) - sum(u, vB - 1)) / std::max(valid(u, vT) - valid(u, vB - 1), 1);
+//				const int fn = cvRound(d1);
+//
+//				// compute data terms costs
+//				const float dataCostG = vT < m_vhor ? costsG(u, vT) - costsG(u, vB - 1) : N_LOG_0_0;
+//				const float dataCostO = costsO(u, vT, fn) - costsO(u, vB - 1, fn);
+//				const float dataCostS = vT < m_vhor ? N_LOG_0_0 : costsS(u, vT) - costsS(u, vB - 1);
+//
+//				// compute priors costs and update costs
+//				const float d2 = dispTable(u, vB - 1, O);
+//				dataCostG + m_priorTerm.getGG(vB, cvRound(d1), cvRound(d2)) + costTable(u, vB - 1, G);
+//
+//				float ct;
+//				//GG
+//				ct = dataCostG + m_priorTerm.getGG(vB, cvRound(d1), cvRound(d2)) + costTable(u, vB - 1, G);
+//				if (ct < minCostG) {
+//					minCostG = ct;
+//					minDispG = d1;
+//					minPosG = cv::Point(G, vB - 1);
+//				}
+//				//GO
+//				ct = dataCostG + m_priorTerm.getGO(vB, cvRound(d1), cvRound(d2)) + costTable(u, vB - 1, O);
+//				if (ct < minCostG) {
+//					minCostG = ct;
+//					minDispG = d1;
+//					minPosG = cv::Point(O, vB - 1);
+//				}
+//				//GS
+//				ct = dataCostG + m_priorTerm.getGS(vB, cvRound(d1), cvRound(d2)) + costTable(u, vB - 1, S);
+//				if (ct < minCostG) {
+//					minCostG = ct;
+//					minDispG = d1;
+//					minPosG = cv::Point(S, vB - 1);
+//				}
+//				//OG
+//				ct = dataCostO + m_priorTerm.getOG(vB, cvRound(d1), cvRound(d2)) + costTable(u, vB - 1, G);
+//				if (ct < minCostO) {
+//					minCostO = ct;
+//					minDispO = d1;
+//					minPosO = cv::Point(G, vB - 1);
+//				}
+//				//OO
+//				ct = dataCostO + m_priorTerm.getOO(vB, cvRound(d1), cvRound(d2)) + costTable(u, vB - 1, O);
+//				if (ct < minCostO) {
+//					minCostO = ct;
+//					minDispO = d1;
+//					minPosO = cv::Point(O, vB - 1);
+//				}
+//				//OS
+//				ct = dataCostO + m_priorTerm.getOS(vB, cvRound(d1), cvRound(d2)) + costTable(u, vB - 1, S);
+//				if (ct < minCostO) {
+//					minCostO = ct;
+//					minDispO = d1;
+//					minPosO = cv::Point(S, vB - 1);
+//				}
+//				//SG
+//				ct = dataCostS + m_priorTerm.getSG(vB, cvRound(d1), cvRound(d2)) + costTable(u, vB - 1, G);
+//				if (ct < minCostS) {
+//					minCostS = ct;
+//					minDispS = d1;
+//					minPosS = cv::Point(G, vB - 1);
+//				}
+//				//SO
+//				ct = dataCostS + m_priorTerm.getSO(vB, cvRound(d1), cvRound(d2)) + costTable(u, vB - 1, O);
+//				if (ct < minCostS) {
+//					minCostS = ct;
+//					minDispS = d1;
+//					minPosS = cv::Point(O, vB - 1);
+//				}
+//				ct = dataCostS + m_priorTerm.getSS(vB, cvRound(d1), cvRound(d2)) + costTable(u, vB - 1, S);
+//				if (ct < minCostS) {
+//					minCostS = ct;
+//					minDispS = d1;
+//					minPosS = cv::Point(S, vB - 1);
+//				}
+////#define UPDATE_COST(C1, C2) \
+////				const float cost##C1##C2 = dataCost##C1 + m_priorTerm.get##C1##C2(vB, cvRound(d1), cvRound(d2)) + costTable(u, vB - 1, C2); \
+////				if (cost##C1##C2 < minCost##C1) \
+////				{ \
+////					minCost##C1 = cost##C1##C2; \
+////					minDisp##C1 = d1; \
+////					minPos##C1 = cv::Point(C2, vB - 1); \
+////				} \
+//				
+//				//UPDATE_COST(G, G);
+//				//UPDATE_COST(G, O);
+//				//UPDATE_COST(G, S);
+//				//UPDATE_COST(O, G);
+//				//UPDATE_COST(O, O);
+//				//UPDATE_COST(O, S);
+//				//UPDATE_COST(S, G);
+//				//UPDATE_COST(S, O);
+//				//UPDATE_COST(S, S);
+//				
+//			}
+//
+//			costTable(u, vT, G) = minCostG;
+//			costTable(u, vT, O) = minCostO;
+//			costTable(u, vT, S) = minCostS;
+//
+//			dispTable(u, vT, G) = minDispG;
+//			dispTable(u, vT, O) = minDispO;
+//			dispTable(u, vT, S) = minDispS;
+//
+//			indexTable(u, vT, G) = minPosG;
+//			indexTable(u, vT, O) = minPosO;
+//			indexTable(u, vT, S) = minPosS;
+//		}
+//	}
+//
+//	for (int u = 0; u < m_w; u++) {
+//		for (int v = 0; v < m_h; v++) {
+//			/*if (h_costTableG[u * m_h + v] != costTable(u, v, G))
+//				std::cout << "**" << u << "," << v << ":" << h_costTableG[u * m_h + v] << " " << costTable(u, v, G);*/
+//			if (h_costTableO[u * m_h + v] != costTable(u, v, O))
+//				std::cout << "**" << u << "," << v << ":" << h_costTableO[u * m_h + v] << " " << costTable(u, v, O);
+//		}
+//	}
+//
+////
+////	//////////////////////////////////////////////////////////////////////////////
+////	// backtracking step
+////	//////////////////////////////////////////////////////////////////////////////
+//	for (int u = 0; u < w; u++)
+//	{
+//		float minCost = std::numeric_limits<float>::max();
+//		cv::Point minPos;
+//		for (int c = 0; c < 3; c++)
+//		{
+//			const float cost = costTable(u, h - 1, c);
+//			if (cost < minCost)
+//			{
+//				minCost = cost;
+//				minPos = cv::Point(c, h - 1);
+//			}
+//		}
+//
+//		while (minPos.y > 0)
+//		{
+//			const cv::Point p1 = minPos;
+//			const cv::Point p2 = indexTable(u, p1.y, p1.x);
+//			if (p1.x == O) // object
+//			{
+//				Stixel stixel;
+//				stixel.u = stixelWidth * u + stixelWidth / 2;
+//				stixel.vT = h - 1 - p1.y;
+//				stixel.vB = h - 1 - (p2.y + 1);
+//				stixel.width = stixelWidth;
+//				stixel.disp = dispTable(u, p1.y, p1.x);
+//				stixels.push_back(stixel);
+//			}
+//			minPos = p2;
+//		}
+//	}
 
 }
 
@@ -378,6 +519,8 @@ void gpuStixelWorld::preprocess(const CameraParameters & camera, float sinTilt, 
 		d_groundDisp, m_vhor, param_.sigmaH, param_.sigmaA, m_h, m_w);
 	m_dataTermO = gpuNegativeLogDataTermObj(param_.dmax, param_.dmin, param_.sigmaO, param_.pOutO, param_.pInvO, camera, param_.deltaz, m_w, m_h);
 	m_dataTermS = gpuNegativeLogDataTermSky(param_.dmax, param_.dmin, param_.sigmaS, param_.pOutS, param_.pInvS, m_w, m_h);
+	m_priorTerm = gpuNegativeLogPriorTerm(m_h, m_vhor, param_.dmax, param_.dmin, camera.baseline, camera.fu, param_.deltaz,
+		param_.eps, param_.pOrd, param_.pGrav, param_.pBlg, h_groundDisp);
 
 	const auto t2 = std::chrono::system_clock::now();
 	const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
@@ -393,6 +536,18 @@ void gpuStixelWorld::destroy()
 	cudaFree(d_groundDisp);
 	cudaFree(d_sum);
 	cudaFree(d_valid);
+
+	cudaFree(d_costTableG);
+	cudaFree(d_costTableO);
+	cudaFree(d_costTableS);
+
+	cudaFree(d_dispTableG);
+	cudaFree(d_dispTableS);
+	cudaFree(d_dispTableO);
+
+	cudaFree(d_indexTableG);
+	cudaFree(d_indexTableO);
+	cudaFree(d_indexTableS);
 
 	cudaFree(h_sum);
 	cudaFree(h_valid);
@@ -563,9 +718,15 @@ void gpuNegativeLogDataTermSky::computeCostsS(float *d_disparity_colReduced)
 }
 
 void gpuNegativeLogPriorTerm::init(int h, float m_vhor, float dmax, float dmin, float b, float fu, float deltaz, float eps, float pOrd, float pGrav, float pBlg, float* groundDisparity)
-
 {
-	const int fnmax = static_cast<int>(dmax);
+	//const int fnmax = static_cast<int>(dmax);
+
+	cudaMalloc((void**)&d_costs0_, m_h * 2 * sizeof(float));
+	cudaMalloc((void**)&d_costs1_, m_h * 9 * sizeof(float));
+	cudaMalloc((void**)&d_costs2_O_O_, fnmax * fnmax * sizeof(float));
+	cudaMalloc((void**)&d_costs2_O_S_, 1 * fnmax * sizeof(float));
+	cudaMalloc((void**)&d_costs2_O_G_, m_h * fnmax * sizeof(float));
+	cudaMalloc((void**)&d_costs2_S_O_, fnmax * fnmax * sizeof(float));
 
 	costs0_.create(h, 2);
 	costs1_.create(h, 3, 3);
@@ -666,4 +827,30 @@ void gpuNegativeLogPriorTerm::init(int h, float m_vhor, float dmax, float dmin, 
 				costs2_S_O_(d2, d1) = N_LOG_0_0;
 		}
 	}
+
+
+	/*costs0_.create(h, 2);
+	costs1_.create(h, 3, 3);
+	costs2_O_O_.create(fnmax, fnmax);
+	costs2_O_S_.create(1, fnmax);
+	costs2_O_G_.create(h, fnmax);
+	costs2_S_O_.create(fnmax, fnmax);*/
+
+
+	cudaMemcpy(d_costs0_, costs0_.data, m_h * 2 * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_costs1_, costs1_.data, m_h * 9 * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_costs2_O_O_, costs2_O_O_.data, fnmax * fnmax * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_costs2_O_S_, costs2_O_S_.data, fnmax * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_costs2_O_G_, costs2_O_G_.data, m_h * fnmax * sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(d_costs2_S_O_, costs2_S_O_.data, fnmax * fnmax * sizeof(float), cudaMemcpyHostToDevice);
+}
+
+void gpuNegativeLogPriorTerm::destroy()
+{
+	cudaFree(d_costs0_);
+	cudaFree(d_costs1_);
+	cudaFree(d_costs2_O_O_);
+	cudaFree(d_costs2_O_G_);
+	cudaFree(d_costs2_O_S_);
+	cudaFree(d_costs2_S_O_);
 }

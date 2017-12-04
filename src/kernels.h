@@ -15,8 +15,17 @@ typedef float pixel_t;
 #include <thrust/host_vector.h>
 #include <thrust/scan.h>
 #include <thrust/execution_policy.h>
+#include <glm/glm.hpp>
 
 #include "gpu.h"
+
+#ifndef imax
+#define imax( a, b ) ( ((a) > (b)) ? (a) : (b) )
+#endif
+
+#ifndef imin
+#define imin( a, b ) ( ((a) < (b)) ? (a) : (b) )
+#endif
 
 __global__ void testkernel(pixel_t *d);
 
@@ -49,5 +58,17 @@ __global__ void kernScanCosts(int m_w, int m_h, float *d_costsG);
 
 __global__ void kernScanCostsObj(int m_w, int fnmax, int m_h, float *d_costsO);
 
+//__global__ void kernPriorCosts0(int m_h, float *d_costs0_, float dmax, float dmin, float m_vhor, float N_LOG_1_0, float N_LOG_0_5);
+//
+//__global__ void	kernPriorCosts1(int m_h, float *d_costs1_, float m_vhor, 
+//	float N_LOG_0_7, float N_LOG_0_5, float N_LOG_0_3, float N_LOG_0_0, float N_LOG_1_0);
 
+
+__global__ void KernDP(int m_w, int m_h, int fnmax, float *d_disparity_colReduced, float *d_sum, float *d_valid,
+	float *d_costsG, float *d_costsO, float *d_costsS, float *d_costTableG, float *d_costTableO, float *d_costTableS, 
+	float *d_dispTableG, float *d_dispTableO, float *d_dispTableS,
+	glm::vec2 *d_indexTableG, glm::vec2 *d_indexTableO, glm::vec2 *d_indexTableS,
+	float *d_costs0_, float *d_costs1_, float *d_costs2_O_G_, float *d_costs2_O_O_, float *d_costs2_O_S_, float *d_costs2_S_O_, 
+	float N_LOG_0_0, float m_vhor
+	);
 #endif // !__KERNELS_H__
