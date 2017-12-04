@@ -201,7 +201,7 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 		N_LOG_0_0, m_vhor
 	);*/
 
-	int smem_size = 4 * m_h * sizeof(float);
+	int smem_size = 10 * m_h * sizeof(float);
 	KernDP << <m_w, m_h, smem_size >> > (m_w, m_h, fnmax, d_disparity_colReduced, d_sum, d_valid,
 		m_dataTermG.d_costsG, m_dataTermO.d_costsO, m_dataTermS.d_costsS,
 		d_costTableG, d_costTableO, d_costTableS, d_dispTableG, d_dispTableO, d_dispTableS, d_indexTableG, d_indexTableO, d_indexTableS,
