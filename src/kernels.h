@@ -27,7 +27,6 @@ typedef float pixel_t;
 #define imin( a, b ) ( ((a) < (b)) ? (a) : (b) )
 #endif
 
-__global__ void testkernel(pixel_t *d);
 
 __global__ void transposeDisparity(pixel_t *d_disparity, pixel_t *d_transDisparity, int rows, int cols);
 

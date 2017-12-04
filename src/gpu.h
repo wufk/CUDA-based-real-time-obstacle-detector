@@ -263,7 +263,6 @@ public:
 		cudaMalloc((void **)&d_disparity_colReduced, m_h * m_w * sizeof(float));
 		cudaMallocHost((void**)&h_disparity_colReduced, m_h * m_w * sizeof(float));
 		/* zero copy for colRecued */
-		//cudaSetDeviceFlags(cudaDeviceMapHost);
 		//cudaHostAlloc((void**)&h_disparity_colReduced, m_h * m_w * sizeof(float), cudaHostAllocMapped);
 		//cudaHostGetDevicePointer((void**)&d_disparity_colReduced, (void*)h_disparity_colReduced, 0);
 		
@@ -271,6 +270,28 @@ public:
 		cudaMalloc((void**)&d_valid, m_h * m_w * sizeof(float));
 		cudaMallocHost((void**)&h_sum, m_h * m_w * sizeof(float));
 		cudaMallocHost((void**)&h_valid, m_h * m_w * sizeof(float));
+
+		//cudaSetDeviceFlags(cudaDeviceMapHost);
+		//cudaHostAlloc((void**)&h_costTableG, m_h * m_w * sizeof(float), cudaHostAllocMapped);
+		//cudaHostAlloc((void**)&h_costTableS, m_h * m_w * sizeof(float), cudaHostAllocMapped);
+		//cudaHostAlloc((void**)&h_costTableO, m_h * m_w * sizeof(float), cudaHostAllocMapped);
+		//cudaHostGetDevicePointer((void**)&d_costTableG, (void*)h_costTableG, 0);
+		//cudaHostGetDevicePointer((void**)&d_costTableS, (void*)h_costTableS, 0);
+		//cudaHostGetDevicePointer((void**)&d_costTableO, (void*)h_costTableO, 0);
+
+		//cudaHostAlloc((void**)&h_dispTableG, m_h * m_w * sizeof(float), cudaHostAllocMapped);
+		//cudaHostAlloc((void**)&h_dispTableS, m_h * m_w * sizeof(float), cudaHostAllocMapped);
+		//cudaHostAlloc((void**)&h_dispTableO, m_h * m_w * sizeof(float), cudaHostAllocMapped);
+		//cudaHostGetDevicePointer((void**)&d_dispTableG, (void*)h_dispTableG, 0);
+		//cudaHostGetDevicePointer((void**)&d_dispTableS, (void*)h_dispTableS, 0);
+		//cudaHostGetDevicePointer((void**)&d_dispTableO, (void*)h_dispTableO, 0);
+
+		//cudaHostAlloc((void**)&h_indexTableG, m_h * m_w * sizeof(glm::vec3), cudaHostAllocMapped);
+		//cudaHostAlloc((void**)&h_indexTableS, m_h * m_w * sizeof(glm::vec3), cudaHostAllocMapped);
+		//cudaHostAlloc((void**)&h_indexTableO, m_h * m_w * sizeof(glm::vec3), cudaHostAllocMapped);
+		//cudaHostGetDevicePointer((void**)&d_indexTableG, (void*)h_indexTableG, 0);
+		//cudaHostGetDevicePointer((void**)&d_indexTableS, (void*)h_indexTableS, 0);
+		//cudaHostGetDevicePointer((void**)&d_indexTableO, (void*)h_indexTableO, 0);
 
 		cudaMalloc((void**)&d_costTableG, m_h * m_w * sizeof(float));
 		cudaMalloc((void**)&d_costTableS, m_h * m_w * sizeof(float));

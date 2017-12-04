@@ -65,7 +65,7 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 
 	columnReduction << <dimGrid, dimBlock >> > (d_disparity_original, d_disparity_colReduced, stixelWidth, m_rows, m_cols, m_w);
 	/* if zero cpy for colReduced, comment the next line */
-	cudaMemcpy(h_disparity_colReduced, d_disparity_colReduced, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
+	//cudaMemcpy(h_disparity_colReduced, d_disparity_colReduced, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
 
 	/* for debug */
 	//float *tmp_colums = new float[h * w];
@@ -122,9 +122,9 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	//gpuNegativeLogDataTermObj dataTermO(param_.dmax, param_.dmin, param_.sigmaO, param_.pOutO, param_.pInvO, camera, param_.deltaz);
 	//gpuNegativeLogDataTermSky dataTermS(param_.dmax, param_.dmin, param_.sigmaS, param_.pOutS, param_.pInvS);
 
-	const int G = gpuNegativeLogPriorTerm::G;
-	const int O = gpuNegativeLogPriorTerm::O;
-	const int S = gpuNegativeLogPriorTerm::S;
+	//const int G = gpuNegativeLogPriorTerm::G;
+	//const int O = gpuNegativeLogPriorTerm::O;
+	//const int S = gpuNegativeLogPriorTerm::S;
 	/*gpuNegativeLogPriorTerm priorTerm(h, m_vhor, param_.dmax, param_.dmin, camera.baseline, camera.fu, param_.deltaz,
 		param_.eps, param_.pOrd, param_.pGrav, param_.pBlg, h_groundDisp);*/
 
@@ -145,8 +145,8 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	dimGrid = dim3(divup(m_w, BLOCKSIZE));
 	kernScanCosts << <dimGrid, BLOCKSIZE >> > (m_w, m_h, d_sum);
 	kernScanCosts << <dimGrid, BLOCKSIZE >> > (m_w, m_h, d_valid);
-	cudaMemcpy(h_sum, d_sum, m_w * m_h * sizeof(float), cudaMemcpyDeviceToHost);
-	cudaMemcpy(h_valid, d_valid, m_w * m_h * sizeof(float), cudaMemcpyDeviceToHost);
+	//cudaMemcpy(h_sum, d_sum, m_w * m_h * sizeof(float), cudaMemcpyDeviceToHost);
+	//cudaMemcpy(h_valid, d_valid, m_w * m_h * sizeof(float), cudaMemcpyDeviceToHost);
 
 	/* This is test
 	//for (int u = 0; u < w; u++) {
@@ -194,8 +194,16 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	//}
 	*/
 
-	KernDP << <m_w, m_h >> > (m_w, m_h, fnmax, d_disparity_colReduced, d_sum, d_valid,
+	/*KernDP << <m_w, m_h >> > (m_w, m_h, fnmax, d_disparity_colReduced, d_sum, d_valid,
 		m_dataTermG.d_costsG, m_dataTermO.d_costsO, m_dataTermS.d_costsS, 
+		d_costTableG, d_costTableO, d_costTableS, d_dispTableG, d_dispTableO, d_dispTableS, d_indexTableG, d_indexTableO, d_indexTableS,
+		m_priorTerm.d_costs0_, m_priorTerm.d_costs1_, m_priorTerm.d_costs2_O_G_, m_priorTerm.d_costs2_O_O_, m_priorTerm.d_costs2_O_S_, m_priorTerm.d_costs2_S_O_,
+		N_LOG_0_0, m_vhor
+	);*/
+
+	int smem_size = 4 * m_h * sizeof(float);
+	KernDP << <m_w, m_h, smem_size >> > (m_w, m_h, fnmax, d_disparity_colReduced, d_sum, d_valid,
+		m_dataTermG.d_costsG, m_dataTermO.d_costsO, m_dataTermS.d_costsS,
 		d_costTableG, d_costTableO, d_costTableS, d_dispTableG, d_dispTableO, d_dispTableS, d_indexTableG, d_indexTableO, d_indexTableS,
 		m_priorTerm.d_costs0_, m_priorTerm.d_costs1_, m_priorTerm.d_costs2_O_G_, m_priorTerm.d_costs2_O_O_, m_priorTerm.d_costs2_O_S_, m_priorTerm.d_costs2_S_O_,
 		N_LOG_0_0, m_vhor
@@ -247,7 +255,7 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 				p2 = cv::Point(h_indexTableS[u * m_h + p1.y].x, h_indexTableS[u * m_h + p1.y].y);
 				break;
 			}
-			if (p1.x == O) // object
+			if (p1.x == 1) // object
 			{
 				Stixel stixel;
 				stixel.u = stixelWidth * u + stixelWidth / 2;

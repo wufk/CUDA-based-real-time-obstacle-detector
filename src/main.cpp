@@ -136,8 +136,8 @@ int main(int argc, char* argv[])
 
 		const auto t1 = std::chrono::system_clock::now();
 
-		stixelWorld.compute(disparity, stixels);
-		//t_stixelWorld.compute(disparity, stixels);
+		//stixelWorld.compute(disparity, stixels);
+		t_stixelWorld.compute(disparity, stixels);
 
 
 		const auto t2 = std::chrono::system_clock::now();
