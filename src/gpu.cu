@@ -63,7 +63,7 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	//cudaMemcpy(data, d_disparity_columns, h * w * sizeof(float), cudaMemcpyDeviceToHost);
 	//cv::Mat columns = cv::Mat(w, h, CV_32F, data);
 
-	columnReduction << <dimGrid, dimBlock >> > (d_disparity_original, d_disparity_colReduced, stixelWidth, m_rows, m_cols, m_w);
+	columnReduction << <dimGrid, dimBlock >> > (d_disparity_original, d_disparity_colReduced, stixelWidth, m_rows, m_cols, m_w);// default stream
 	/* if zero cpy for colReduced, comment the next line */
 	//cudaMemcpy(h_disparity_colReduced, d_disparity_colReduced, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
 
@@ -128,23 +128,39 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	/*gpuNegativeLogPriorTerm priorTerm(h, m_vhor, param_.dmax, param_.dmin, camera.baseline, camera.fu, param_.deltaz,
 		param_.eps, param_.pOrd, param_.pGrav, param_.pBlg, h_groundDisp);*/
 
-	m_dataTermG.computeCostsG(d_disparity_colReduced);
-	m_dataTermS.computeCostsS(d_disparity_colReduced);
-	m_dataTermO.computeCostsO(d_disparity_colReduced);
+	cudaDeviceSynchronize();
 
-	cudaMemcpy(d_sum, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice);
-	cudaMemcpy(d_valid, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice);
+	cudaMemcpyAsync(d_sum, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice, stream3); // stream 3
+	cudaMemcpyAsync(d_valid, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice, stream4); // stream 4
+
+	m_dataTermO.computeCostsO(d_disparity_colReduced, &stream2);// stream 2
+	m_dataTermG.computeCostsG(d_disparity_colReduced, &stream5);// stream 5
+	m_dataTermS.computeCostsS(d_disparity_colReduced, &stream1);// stream 1
+
+	//cudaMemcpy(d_sum, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice); // stream 3
+	//cudaMemcpy(d_valid, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice); // stream 4
 	is_less_than_zero less;
 	is_larger_than_zero large;
 	thrust::device_ptr<float> thrust_d_sum(d_sum);
 	thrust::device_ptr<float> thrust_d_valid(d_valid);
-	thrust::replace_if(thrust::device, thrust_d_sum, thrust_d_sum + m_w * m_h, less, 0);
-	thrust::replace_if(thrust::device, thrust_d_valid, thrust_d_valid + m_w * m_h, large, 1);
-	thrust::replace_if(thrust::device, thrust_d_valid, thrust_d_valid + m_w * m_h, less, 0);
+
+	thrust::replace_if(thrust::cuda::par.on(stream3), thrust_d_sum, thrust_d_sum + m_w * m_h, less, 0); // stream 3
+	thrust::replace_if(thrust::cuda::par.on(stream4), thrust_d_valid, thrust_d_valid + m_w * m_h, large, 1); // stream 4
+	thrust::replace_if(thrust::cuda::par.on(stream4), thrust_d_valid, thrust_d_valid + m_w * m_h, less, 0); // stream 4
+
+	//thrust::replace_if(thrust_d_sum, thrust_d_sum + m_w * m_h, less, 0); // stream 3
+	//thrust::replace_if(thrust_d_valid, thrust_d_valid + m_w * m_h, large, 1); // stream 4
+	//thrust::replace_if(thrust_d_valid, thrust_d_valid + m_w * m_h, less, 0); // stream 4
+	//thrust::replace_if(thrust::device, thrust_d_valid, thrust_d_valid + m_w * m_h, large, 1);
+	//thrust::replace_if(thrust::device, thrust_d_valid, thrust_d_valid + m_w * m_h, less, 0);
 
 	dimGrid = dim3(divup(m_w, BLOCKSIZE));
-	kernScanCosts << <dimGrid, BLOCKSIZE >> > (m_w, m_h, d_sum);
-	kernScanCosts << <dimGrid, BLOCKSIZE >> > (m_w, m_h, d_valid);
+	//kernScanCosts << <dimGrid, BLOCKSIZE >> > (m_w, m_h, d_sum); // stream 3
+	//kernScanCosts << <dimGrid, BLOCKSIZE >> > (m_w, m_h, d_valid); // stream 4
+	kernScanCosts << <dimGrid, BLOCKSIZE, 0, stream3 >> > (m_w, m_h, d_sum); // stream 3
+	kernScanCosts << <dimGrid, BLOCKSIZE, 0, stream4 >> > (m_w, m_h, d_valid); // stream 4
+
+	cudaDeviceSynchronize();
 	//cudaMemcpy(h_sum, d_sum, m_w * m_h * sizeof(float), cudaMemcpyDeviceToHost);
 	//cudaMemcpy(h_valid, d_valid, m_w * m_h * sizeof(float), cudaMemcpyDeviceToHost);
 
@@ -207,7 +223,7 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 		d_costTableG, d_costTableO, d_costTableS, d_dispTableG, d_dispTableO, d_dispTableS, d_indexTableG, d_indexTableO, d_indexTableS,
 		m_priorTerm.d_costs0_, m_priorTerm.d_costs1_, m_priorTerm.d_costs2_O_G_, m_priorTerm.d_costs2_O_O_, m_priorTerm.d_costs2_O_S_, m_priorTerm.d_costs2_S_O_,
 		N_LOG_0_0, m_vhor
-	);
+	); // default stream
 
 	cudaMemcpy(h_costTableG, d_costTableG, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
 	cudaMemcpy(h_costTableS, d_costTableS, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
@@ -221,10 +237,13 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	cudaMemcpy(h_indexTableO, d_indexTableO, m_h * m_w * sizeof(glm::vec2), cudaMemcpyDeviceToHost);
 	cudaMemcpy(h_indexTableS, d_indexTableS, m_h * m_w * sizeof(glm::vec2), cudaMemcpyDeviceToHost);
 
+	cudaDeviceSynchronize();
+
 	for (int u = 0; u < w; u++)
 	{
 		float minCost = std::numeric_limits<float>::max();
 		cv::Point minPos;
+		//float cost = d_costTableG[u * m_h + h - 1];
 		float cost = h_costTableG[u * m_h + h - 1];
 		if (cost < minCost) {
 			minCost = cost;
@@ -247,12 +266,15 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 			switch (p1.x) {
 			case 0:
 				p2 = cv::Point(h_indexTableG[u * m_h + p1.y].x, h_indexTableG[u * m_h + p1.y].y);
+				//p2 = cv::Point(d_indexTableG[u * m_h + p1.y].x, d_indexTableG[u * m_h + p1.y].y);
 				break;
 			case 1:
 				p2 = cv::Point(h_indexTableO[u * m_h + p1.y].x, h_indexTableO[u * m_h + p1.y].y);
+				//p2 = cv::Point(d_indexTableO[u * m_h + p1.y].x, d_indexTableO[u * m_h + p1.y].y);
 				break;
 			case 2:
 				p2 = cv::Point(h_indexTableS[u * m_h + p1.y].x, h_indexTableS[u * m_h + p1.y].y);
+				//p2 = cv::Point(d_indexTableS[u * m_h + p1.y].x, d_indexTableS[u * m_h + p1.y].y);
 				break;
 			}
 			if (p1.x == 1) // object
@@ -264,6 +286,7 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 				stixel.width = stixelWidth;
 				//stixel.disp = dispTable(u, p1.y, p1.x);
 				stixel.disp = h_dispTableG[u * m_h + p1.y];
+				//stixel.disp = d_dispTableG[u * m_h + p1.y];
 				stixels.push_back(stixel);
 			}
 			minPos = p2;
@@ -537,6 +560,12 @@ void gpuStixelWorld::preprocess(const CameraParameters & camera, float sinTilt, 
 
 void gpuStixelWorld::destroy()
 {
+	cudaStreamDestroy(stream1);
+	cudaStreamDestroy(stream2);
+	cudaStreamDestroy(stream3);
+	cudaStreamDestroy(stream4);
+	cudaStreamDestroy(stream5);
+
 	cudaFree(d_disparity_original);
 	cudaFree(h_disparity_colReduced);
 	cudaFree(h_groundDisp);
@@ -603,16 +632,16 @@ void gpuNegativeLogDataTermGrd::init(float dmax, float dmin, float sigmaD,
 	cudaMemcpy(h_cquad_, d_cquad_, h * sizeof(float), cudaMemcpyDeviceToHost);
 }
 
-void gpuNegativeLogDataTermGrd::computeCostsG(float* d_disp_colReduced)
+void gpuNegativeLogDataTermGrd::computeCostsG(float* d_disp_colReduced, cudaStream_t* stream)
 {	
 	int r = divup(m_w, BLOCKSIZE); int c = divup(m_h, BLOCKSIZE);
 	dim3 dimGrid(r, c, 1);
 	dim3 dimBlock(BLOCKSIZE, BLOCKSIZE, 1);
-	kernComputeCostsG << <dimGrid, dimBlock >> > (m_w, m_h, nLogPUniform_, d_costsG, d_nLogPGaussian_, d_cquad_, d_fn_, d_disp_colReduced);
+	kernComputeCostsG << <dimGrid, dimBlock, 0, *stream >> > (m_w, m_h, nLogPUniform_, d_costsG, d_nLogPGaussian_, d_cquad_, d_fn_, d_disp_colReduced);
 	dimGrid = dim3(divup(m_w, BLOCKSIZE));
-	kernScanCosts << <dimGrid, BLOCKSIZE >> > (m_w, m_h, d_costsG);
+	kernScanCosts << <dimGrid, BLOCKSIZE, 0, *stream >> > (m_w, m_h, d_costsG);
 
-	cudaMemcpy(h_costsG, d_costsG, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
+	//cudaMemcpy(h_costsG, d_costsG, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
 }
 
 void gpuNegativeLogDataTermGrd::destroy()
@@ -634,7 +663,7 @@ void gpuNegativeLogDataTermGrd::destroy()
 }
 
 
-void gpuNegativeLogDataTermObj::computeCostsO(float * d_disp_colReduced)
+void gpuNegativeLogDataTermObj::computeCostsO(float * d_disp_colReduced, cudaStream_t* stream)
 {
 	int r = divup(m_w, 8); int c = divup(m_h, 8); int t = divup(fnmax, 8);
 	//dim3 dimGrid(r, c, t);
@@ -646,12 +675,13 @@ void gpuNegativeLogDataTermObj::computeCostsO(float * d_disp_colReduced)
 
 	dim3 dimGrid(r, t, c);
 	dim3 dimBlock(8, 8, 8);
-	kernComputeCostsOO << <dimGrid, dimBlock >> > (m_w, fnmax, m_h, d_costsO, d_disp_colReduced, d_nLogPGaussian_, d_cquad_, nLogPUniform_);
+	kernComputeCostsOO << <dimGrid, dimBlock, 0, *stream >> > (m_w, fnmax, m_h, d_costsO, d_disp_colReduced, d_nLogPGaussian_, d_cquad_, nLogPUniform_);
 	dimGrid = dim3(divup(m_w, BLOCKSIZE), divup(fnmax, BLOCKSIZE), 1);
 	dimBlock = dim3(BLOCKSIZE, BLOCKSIZE);
-	kernScanCostsObj << <dimGrid, dimBlock >> > (m_w, fnmax, m_h, d_costsO);
+	kernScanCostsObj << <dimGrid, dimBlock, 0, *stream >> > (m_w, fnmax, m_h, d_costsO);
 
-	cudaMemcpy(h_costsO, d_costsO, m_h * m_w * fnmax * sizeof(float), cudaMemcpyDeviceToHost);}
+	//cudaMemcpy(h_costsO, d_costsO, m_h * m_w * fnmax * sizeof(float), cudaMemcpyDeviceToHost);
+}
 
 void gpuNegativeLogDataTermObj::destroy()
 {
@@ -714,15 +744,15 @@ void gpuNegativeLogDataTermSky::destroy()
 	delete[] h_costsS;
 }
 
-void gpuNegativeLogDataTermSky::computeCostsS(float *d_disparity_colReduced)
+void gpuNegativeLogDataTermSky::computeCostsS(float *d_disparity_colReduced, cudaStream_t* stream)
 {
 	int r = divup(m_w, BLOCKSIZE); int c = divup(m_h, BLOCKSIZE);
 	dim3 dimGrid(r, c, 1);
 	dim3 dimBlock(BLOCKSIZE, BLOCKSIZE, 1);
-	kernComputeCostsS << <dimGrid, dimBlock >> > (m_w, m_h, d_costsS, d_disparity_colReduced, nLogPUniform_, cquad_, nLogPGaussian_, fn_);
+	kernComputeCostsS << <dimGrid, dimBlock, 0, *stream >> > (m_w, m_h, d_costsS, d_disparity_colReduced, nLogPUniform_, cquad_, nLogPGaussian_, fn_);
 	dimGrid = dim3(divup(m_w, BLOCKSIZE));
-	kernScanCosts << <dimGrid, BLOCKSIZE >> > (m_w, m_h, d_costsS);
-	cudaMemcpy(h_costsS, d_costsS, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
+	kernScanCosts << <dimGrid, BLOCKSIZE, 0, *stream >> > (m_w, m_h, d_costsS);
+	//cudaMemcpy(h_costsS, d_costsS, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
 }
 
 void gpuNegativeLogPriorTerm::init(int h, float m_vhor, float dmax, float dmin, float b, float fu, float deltaz, float eps, float pOrd, float pGrav, float pBlg, float* groundDisparity)
