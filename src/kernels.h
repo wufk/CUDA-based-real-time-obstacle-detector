@@ -57,10 +57,8 @@ __global__ void kernScanCosts(int m_w, int m_h, float *d_costsG);
 
 __global__ void kernScanCostsObj(int m_w, int fnmax, int m_h, float *d_costsO);
 
-//__global__ void kernPriorCosts0(int m_h, float *d_costs0_, float dmax, float dmin, float m_vhor, float N_LOG_1_0, float N_LOG_0_5);
-//
-//__global__ void	kernPriorCosts1(int m_h, float *d_costs1_, float m_vhor, 
-//	float N_LOG_0_7, float N_LOG_0_5, float N_LOG_0_3, float N_LOG_0_0, float N_LOG_1_0);
+__global__ void kerndValid(int m_w, int m_h, float *d_valid);
+__global__ void kerndSum(int m_w, int m_h, float *d_sum);
 
 
 __global__ void KernDP(int m_w, int m_h, int fnmax, float *d_disparity_colReduced, float *d_sum, float *d_valid,

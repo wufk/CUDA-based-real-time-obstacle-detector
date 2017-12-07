@@ -49,7 +49,8 @@ public:
 	void init(float dmax, float dmin, float sigmaD, float pOut, float pInv, const CameraParameters& camera,
 		float* d_groundDisparity, float vhor, float sigmaH, float sigmaA, int h);
 	
-	void computeCostsG(float* d_disp_colReduced, cudaStream_t* stream);
+	inline void computeCostsG1(float* d_disp_colReduced, cudaStream_t* stream);
+	inline void computeCostsG2(cudaStream_t* stream);
 
 	void destroy();
 
@@ -79,7 +80,8 @@ public:
 
 		init(dmax, dmin, sigma, pOut, pInv, camera, deltaz);
 	}
-	void computeCostsO(float *d_disp_colReduced, cudaStream_t* stream);
+	inline void computeCostsO1(float *d_disp_colReduced, cudaStream_t* stream);
+	inline void computeCostsO2(cudaStream_t* stream);
 	void destroy();
 
 	inline float operator()(float d, int fn) const
@@ -128,7 +130,8 @@ public:
 	// pre-compute constant terms
 	void init(float dmax, float dmin, float sigmaD, float pOut, float pInv, float fn);
 	void destroy();
-	void computeCostsS(float *d_disparity_colReduced, cudaStream_t* stream);
+	inline void computeCostsS1(float *d_disparity_colReduced, cudaStream_t* stream);
+	inline void computeCostsS2(cudaStream_t* stream);
 
 	int m_h, m_w;
 	float nLogPUniform_, cquad_, nLogPGaussian_, fn_;
@@ -249,55 +252,18 @@ public:
 		const float cosTilt = cosf(camera.tilt);
 		m_vhor = m_h - 1 - (camera.v0 * cosTilt - camera.fu * sinTilt) / cosTilt;
 
-		cudaStreamCreate(&stream1);
-		cudaStreamCreate(&stream2);
-		cudaStreamCreate(&stream3);
-		cudaStreamCreate(&stream4);
-		cudaStreamCreate(&stream5);
+		for (int i = 0; i < 5; i++) {
+			cudaStreamCreate(&streams[i]);
+		}
 
-		//d_disparity_colReduced = nullptr;
-		//d_disparity_columns = nullptr;
-
-
-		//cudaSetDeviceFlags(cudaDeviceMapHost);
 		cudaMalloc((void **)&d_disparity_original, m_rows * m_cols * sizeof(float));
-		//cudaHostAlloc((void**)&h_disparity_original, m_rows * m_cols * sizeof(float), cudaHostAllocMapped);
-		//cudaHostGetDevicePointer((void**)&d_disparity_original, (void*)h_disparity_original, 0);
-			
-		
-		//data = new float[m_h * m_w];
 		cudaMalloc((void **)&d_disparity_colReduced, m_h * m_w * sizeof(float));
 		cudaMallocHost((void**)&h_disparity_colReduced, m_h * m_w * sizeof(float));
-		/* zero copy for colRecued */
-		//cudaHostAlloc((void**)&h_disparity_colReduced, m_h * m_w * sizeof(float), cudaHostAllocMapped);
-		//cudaHostGetDevicePointer((void**)&d_disparity_colReduced, (void*)h_disparity_colReduced, 0);
 		
 		cudaMalloc((void**)&d_sum, m_h * m_w * sizeof(float));
 		cudaMalloc((void**)&d_valid, m_h * m_w * sizeof(float));
 		cudaMallocHost((void**)&h_sum, m_h * m_w * sizeof(float));
 		cudaMallocHost((void**)&h_valid, m_h * m_w * sizeof(float));
-
-		//cudaSetDeviceFlags(cudaDeviceMapHost);
-		//cudaHostAlloc((void**)&h_costTableG, m_h * m_w * sizeof(float), cudaHostAllocMapped);
-		//cudaHostAlloc((void**)&h_costTableS, m_h * m_w * sizeof(float), cudaHostAllocMapped);
-		//cudaHostAlloc((void**)&h_costTableO, m_h * m_w * sizeof(float), cudaHostAllocMapped);
-		//cudaHostGetDevicePointer((void**)&d_costTableG, (void*)h_costTableG, 0);
-		//cudaHostGetDevicePointer((void**)&d_costTableS, (void*)h_costTableS, 0);
-		//cudaHostGetDevicePointer((void**)&d_costTableO, (void*)h_costTableO, 0);
-
-		//cudaHostAlloc((void**)&h_dispTableG, m_h * m_w * sizeof(float), cudaHostAllocMapped);
-		//cudaHostAlloc((void**)&h_dispTableS, m_h * m_w * sizeof(float), cudaHostAllocMapped);
-		//cudaHostAlloc((void**)&h_dispTableO, m_h * m_w * sizeof(float), cudaHostAllocMapped);
-		//cudaHostGetDevicePointer((void**)&d_dispTableG, (void*)h_dispTableG, 0);
-		//cudaHostGetDevicePointer((void**)&d_dispTableS, (void*)h_dispTableS, 0);
-		//cudaHostGetDevicePointer((void**)&d_dispTableO, (void*)h_dispTableO, 0);
-
-		//cudaHostAlloc((void**)&h_indexTableG, m_h * m_w * sizeof(glm::vec3), cudaHostAllocMapped);
-		//cudaHostAlloc((void**)&h_indexTableS, m_h * m_w * sizeof(glm::vec3), cudaHostAllocMapped);
-		//cudaHostAlloc((void**)&h_indexTableO, m_h * m_w * sizeof(glm::vec3), cudaHostAllocMapped);
-		//cudaHostGetDevicePointer((void**)&d_indexTableG, (void*)h_indexTableG, 0);
-		//cudaHostGetDevicePointer((void**)&d_indexTableS, (void*)h_indexTableS, 0);
-		//cudaHostGetDevicePointer((void**)&d_indexTableO, (void*)h_indexTableO, 0);
 
 		//Ordinary malloc
 		cudaMalloc((void**)&d_costTableG, m_h * m_w * sizeof(float));
@@ -311,32 +277,6 @@ public:
 		cudaMalloc((void**)&d_indexTableG, m_h * m_w * sizeof(glm::vec2));
 		cudaMalloc((void**)&d_indexTableS, m_h * m_w * sizeof(glm::vec2));
 		cudaMalloc((void**)&d_indexTableO, m_h * m_w * sizeof(glm::vec2));
-
-		// unified memory failed
-		//cudaMallocManaged(&d_costTableG, m_h * m_w * sizeof(float));
-		//cudaMallocManaged(&d_costTableS, m_h * m_w * sizeof(float));
-		//cudaMallocManaged(&d_costTableO, m_h * m_w * sizeof(float));
-
-		//cudaMallocManaged(&d_dispTableG, m_h * m_w * sizeof(float));
-		//cudaMallocManaged(&d_dispTableS, m_h * m_w * sizeof(float));
-		//cudaMallocManaged(&d_dispTableO, m_h * m_w * sizeof(float));
-
-		//cudaMallocManaged(&d_indexTableG, m_h * m_w * sizeof(glm::vec2));
-		//cudaMallocManaged(&d_indexTableS, m_h * m_w * sizeof(glm::vec2));
-		//cudaMallocManaged(&d_indexTableO, m_h * m_w * sizeof(glm::vec2));
-
-		// Pagable memory
-		//h_costTableG = new float[m_h * m_w];
-		//h_costTableS = new float[m_h * m_w];
-		//h_costTableO = new float[m_h * m_w];
-
-		//h_dispTableG = new float[m_h * m_w];
-		//h_dispTableS = new float[m_h * m_w];
-		//h_dispTableO = new float[m_h * m_w];
-
-		//h_indexTableG = new glm::vec2[m_h * m_w];
-		//h_indexTableS = new glm::vec2[m_h * m_w];
-		//h_indexTableO = new glm::vec2[m_h * m_w];
 
 		//Pinned memory
 		cudaMallocHost((void**)&h_costTableG, m_h * m_w * sizeof(float));
@@ -352,7 +292,6 @@ public:
 		cudaMallocHost((void**)&h_indexTableO, m_h * m_w * sizeof(glm::vec2));
 
 		preprocess(camera, sinTilt, cosTilt);
-		// this line can be earsed forever cudaMalloc((void **)&d_disparity_columns, m_h * m_w * sizeof(float));
 	}
 
 	virtual void compute(const cv::Mat& disp, std::vector<Stixel>& stixels) override;
@@ -394,9 +333,6 @@ private:
 	gpuNegativeLogDataTermSky m_dataTermS;
 	gpuNegativeLogPriorTerm m_priorTerm;
 
-	cudaStream_t stream1;
-	cudaStream_t stream2;
-	cudaStream_t stream3;
-	cudaStream_t stream4;
-	cudaStream_t stream5;
+	cudaStream_t streams[5];
+
 };

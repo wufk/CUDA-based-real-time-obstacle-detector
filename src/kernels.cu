@@ -277,6 +277,35 @@ __global__ void kernScanCostsObj(int m_w, int fnmax, int m_h, float * d_costsO)
 	
 }
 
+__global__ void kerndValid(int m_w, int m_h, float * d_valid)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x; //u
+	int jdx = blockIdx.y * blockDim.y + threadIdx.y; //v
+	if (idx >= m_w || jdx >= m_h) {
+		return;
+	}
+	int index = idx * m_h + jdx;
+	if (d_valid[index] >= 0) {
+		d_valid[index] = 1;
+	}
+	else {
+		d_valid[index] = 0;
+	}
+}
+
+__global__ void kerndSum(int m_w, int m_h, float * d_sum)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x; //u
+	int jdx = blockIdx.y * blockDim.y + threadIdx.y; //v
+	if (idx >= m_w || jdx >= m_h) {
+		return;
+	}
+	int index = idx * m_h + jdx;
+	if (d_sum[index] < 0) {
+		d_sum[index] = 0;
+	}
+}
+
 __global__ void KernDP(int m_w, int m_h, int fnmax, float * d_disparity_colReduced, float * d_sum, float * d_valid, 
 	float * d_costsG, float * d_costsO, float * d_costsS, float * d_costTableG, float * d_costTableO, float * d_costTableS, 
 	float * d_dispTableG, float * d_dispTableO, float * d_dispTableS, 
