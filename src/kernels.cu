@@ -261,6 +261,45 @@ __global__ void kernScanCosts(int m_w, int m_h, float *d_costsG)
 	thrust::inclusive_scan(thrust::device, thrust_tmpTerm, thrust_tmpTerm + m_h, thrust_costsG);
 }
 
+__global__ void kernScan2(int m_w, int m_h, int fnmax, float * data)
+{
+	int idx = blockIdx.x;
+	int jdx = threadIdx.x;
+	if (jdx >= m_h || idx >= m_w * fnmax) return;
+	extern __shared__ int sm[];
+
+	float *s_data = (float*)&sm;
+	int l_idx = idx * m_h + jdx;
+	int s_idx = jdx;
+	//int s_idx = jdx + jdx / warpSize;
+	s_data[s_idx] = data[l_idx];
+
+	for (unsigned int stride = 1; stride < blockDim.x; stride *= 2) {
+		__syncthreads();
+		int index = (jdx + 1) * 2 * stride - 1;
+		int prev = index - stride;
+		//index += index / warpSize;
+		//prev += prev / warpSize;
+		if (index < blockDim.x) {
+			s_data[index] += s_data[prev];
+		}
+	}
+
+	for (unsigned int stride = blockDim.x / 4; stride > 0; stride /= 2) {
+		__syncthreads();
+		int index = (jdx + 1) * 2 * stride - 1;
+		int next = index + stride;
+		//index += index / warpSize;
+		//next += next / warpSize;
+		if (next < blockDim.x) {
+			s_data[next] += s_data[index];
+		}
+	}
+
+	__syncthreads();
+	data[l_idx] = s_data[s_idx];
+}
+
 __global__ void kernScanCostsObj(int m_w, int fnmax, int m_h, float * d_costsO)
 {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x; //u
@@ -304,6 +343,47 @@ __global__ void kerndSum(int m_w, int m_h, float * d_sum)
 	if (d_sum[index] < 0) {
 		d_sum[index] = 0;
 	}
+}
+
+
+
+__global__ void kernScan1(int m_w, int m_h, float * data)
+{
+	int idx = blockIdx.x;
+	int jdx = threadIdx.x;
+	if (jdx >= m_h || idx >= m_w) return;
+	extern __shared__ int sm[];
+
+	float *s_data = (float*)&sm;
+	//int s_idx = jdx + jdx / warpSize;
+	int s_idx = jdx;
+	int l_idx = idx * m_h + jdx;
+	s_data[s_idx] = data[l_idx];
+
+	for (unsigned int stride = 1; stride < blockDim.x; stride *= 2) {
+		__syncthreads();
+		int index = (jdx + 1) * 2 * stride - 1;
+		int prev = index - stride;
+		//index += index / warpSize;
+		//prev += prev / warpSize;
+		if (index < blockDim.x) {
+			s_data[index] += s_data[prev];
+		}
+	}
+
+	for (unsigned int stride = blockDim.x / 4; stride > 0; stride /= 2) {
+		__syncthreads();
+		int index = (jdx + 1) * 2 * stride - 1;
+		int next = index + stride;
+		//index += index / warpSize;
+		//next += next / warpSize;
+		if (next < blockDim.x) {
+			s_data[next] += s_data[index];
+		}
+	}
+
+	__syncthreads();
+	data[l_idx] = s_data[s_idx];
 }
 
 __global__ void KernDP(int m_w, int m_h, int fnmax, float * d_disparity_colReduced, float * d_sum, float * d_valid, 
@@ -386,11 +466,25 @@ __global__ void KernDP(int m_w, int m_h, int fnmax, float * d_disparity_colReduc
 		//const float dataCostG = vT < m_vhor ? d_costsG[index] - d_costsG[vB_idx] : N_LOG_0_0;
 		//const float dataCostS = vT < m_vhor ? N_LOG_0_0 : d_costsS[index] - d_costsS[vB_idx];
 
+		//float sum_vB = s_sum[vB - 1];
+		//float val_vB = s_valid[vB - 1];
+		//float costsG_vB = s_costsG[vB - 1];
+		//float costsS_vB = s_costsS[vB - 1];
+		//float costs1_0_vB = s_costs1_0[vB];
+		//float costs1_1_vB = s_costs1_1[vB];
+		//float costs1_3_vB = s_costs1_3[vB];
+		//float costs1_4_vB = s_costs1_4[vB];
+		//float costs1_5_vB = s_costs1_5[vB];
+		//float costs1_7_vB = s_costs1_7[vB];
+
+		//const float d1 = (s_sum[vT] - sum_vB) / imax(s_valid[vT] - val_vB, 1);
 		const float d1 = (s_sum[vT] - s_sum[vB - 1]) / imax(s_valid[vT] - s_valid[vB - 1], 1);
 		const int fn = static_cast<int>(d1 + 0.5f);
 
+		//const float dataCostG = vT < m_vhor ? s_costsG[vT] - costsG_vB : N_LOG_0_0;
 		const float dataCostG = vT < m_vhor ? s_costsG[vT] - s_costsG[vB - 1] : N_LOG_0_0;
 		const float dataCostO = d_costsO[u * fnmax * m_h + fn * m_h + vT] - d_costsO[u * fnmax * m_h + fn * m_h + vB - 1];
+		//const float dataCostS = vT < m_vhor ? N_LOG_0_0 : s_costsS[vT] - costsS_vB;
 		const float dataCostS = vT < m_vhor ? N_LOG_0_0 : s_costsS[vT] - s_costsS[vB - 1];
 
 		const float d2 = d_dispTableO[vB_idx];
@@ -412,6 +506,7 @@ __global__ void KernDP(int m_w, int m_h, int fnmax, float * d_disparity_colReduc
 		//GG: inline float getGG(int vB, int d1, int d2) return costs1_(vB, G, G);
 		//c = dataCostG + d_costs1_[vB * 9 + 0 * 3 + 0] + d_costTableG[vB_idx];
 		c = dataCostG + s_costs1_0[vB] + d_costTableG[vB_idx];
+		//c = dataCostG + costs1_0_vB + d_costTableG[vB_idx];
 		//c = dataCostG + d_costs1_[vB * 9 + 0 * 3 + 0] + s_costTableG[vB - 1];
 		if (c < minCostG) {
 			minCostG = c;
@@ -421,6 +516,7 @@ __global__ void KernDP(int m_w, int m_h, int fnmax, float * d_disparity_colReduc
 		//GO inline float getGO(int vB, int d1, int d2) return costs1_(vB, G, O);
 		//c = dataCostG + d_costs1_[vB * 9 + 0 * 3 + 1] + d_costTableO[vB_idx];
 		c = dataCostG + s_costs1_1[vB] + d_costTableO[vB_idx];
+		//c = dataCostG + costs1_1_vB + d_costTableO[vB_idx];
 		//c = dataCostG + d_costs1_[vB * 9 + 0 * 3 + 1] + s_costTableO[vB - 1];
 		if (c < minCostG) {
 			minCostG = c;
@@ -438,6 +534,7 @@ __global__ void KernDP(int m_w, int m_h, int fnmax, float * d_disparity_colReduc
 		//OG inline float getOG(int vB, int d1, int d2) return costs1_(vB, O, G) + costs2_O_G_(vB - 1, d1);
 		//c = dataCostO + d_costs1_[vB * 9 + 1 * 3 + 0] + d_costs2_O_G_[(vB - 1) * fnmax + fn] + d_costTableG[vB_idx];
 		c = dataCostO + s_costs1_3[vB] + d_costs2_O_G_[(vB - 1) * fnmax + fn] + d_costTableG[vB_idx];
+		//c = dataCostO + costs1_3_vB + d_costs2_O_G_[(vB - 1) * fnmax + fn] + d_costTableG[vB_idx];
 		//c = dataCostO + d_costs1_[vB * 9 + 1 * 3 + 0] + d_costs2_O_G_[(vB - 1) * fnmax + fn] + s_costTableG[vB - 1];
 		if (c < minCostO) {
 			minCostO = c;
@@ -447,6 +544,7 @@ __global__ void KernDP(int m_w, int m_h, int fnmax, float * d_disparity_colReduc
 		//OO inline float getOO(int vB, int d1, int d2) return costs1_(vB, O, O) + costs2_O_O_(d2, d1);
 		//c = dataCostO + d_costs1_[vB * 9 + 1 * 3 + 1] + d_costs2_O_O_[f_d2 * fnmax + fn] + d_costTableO[vB_idx];
 		c = dataCostO + s_costs1_4[vB] + d_costs2_O_O_[f_d2 * fnmax + fn] + d_costTableO[vB_idx];
+		//c = dataCostO + costs1_4_vB + d_costs2_O_O_[f_d2 * fnmax + fn] + d_costTableO[vB_idx];
 		//c = dataCostO + d_costs1_[vB * 9 + 1 * 3 + 1] + d_costs2_O_O_[f_d2 * fnmax + fn] + s_costTableO[vB - 1];
 		if (c < minCostO) {
 			minCostO = c;
@@ -456,6 +554,7 @@ __global__ void KernDP(int m_w, int m_h, int fnmax, float * d_disparity_colReduc
 		//OS inline float getOS(int vB, int d1, int d2) return costs1_(vB, O, S) + costs2_O_S_(d1);
 		//c = dataCostO + d_costs1_[vB * 9 + 1 * 3 + 2] + d_costs2_O_S_[fn] + d_costTableS[vB_idx];
 		c = dataCostO + s_costs1_5[vB] + d_costs2_O_S_[fn] + d_costTableS[vB_idx];
+		//c = dataCostO + costs1_5_vB + d_costs2_O_S_[fn] + d_costTableS[vB_idx];
 		//c = dataCostO + d_costs1_[vB * 9 + 1 * 3 + 2] + d_costs2_O_S_[fn] + s_costTableS[vB - 1];
 		if (c < minCostO) {
 			minCostO = c;
@@ -473,6 +572,7 @@ __global__ void KernDP(int m_w, int m_h, int fnmax, float * d_disparity_colReduc
 		//SO inline float getSO(int vB, int d1, int d2) return costs1_(vB, S, O) + costs2_S_O_(d2, d1);
 		//c = dataCostS + d_costs1_[vB * 9 + 2 * 3 + 1] + d_costs2_S_O_[f_d2 * fnmax + fn] + d_costTableO[vB_idx];
 		c = dataCostS + s_costs1_7[vB] + d_costs2_S_O_[f_d2 * fnmax + fn] + d_costTableO[vB_idx];
+		//c = dataCostS + costs1_7_vB + d_costs2_S_O_[f_d2 * fnmax + fn] + d_costTableO[vB_idx];
 		//c = dataCostS + d_costs1_[vB * 9 + 2 * 3 + 1] + d_costs2_S_O_[f_d2 * fnmax + fn] + s_costTableO[vB - 1];
 		if (c < minCostS) {
 			minCostS = c;

@@ -256,6 +256,9 @@ public:
 			cudaStreamCreate(&streams[i]);
 		}
 
+		cudaEventCreate(&start);
+		cudaEventCreate(&end);
+
 		cudaMalloc((void **)&d_disparity_original, m_rows * m_cols * sizeof(float));
 		cudaMalloc((void **)&d_disparity_colReduced, m_h * m_w * sizeof(float));
 		cudaMallocHost((void**)&h_disparity_colReduced, m_h * m_w * sizeof(float));
@@ -335,4 +338,6 @@ private:
 
 	cudaStream_t streams[5];
 
+	cudaEvent_t start;
+	cudaEvent_t end;
 };
