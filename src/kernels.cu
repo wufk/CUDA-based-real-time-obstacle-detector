@@ -498,11 +498,11 @@ __global__ void KernDP(int m_w, int m_h, int fnmax, float * d_disparity_colReduc
 	int index = u * m_h + vT;
 
 	float *s_costsG = (float*)&smem;
-	float *s_costsS = &s_costsG[m_h];
-	float *s_sum = &s_costsS[m_h];
+	//float *s_costsS = &s_costsG[m_h];
+	//float *s_sum = &s_costsS[m_h];
 	//float *s_valid = &s_sum[m_h];
-	//float *s_costsS = &s_costsG[512 + 1];
-	//float *s_sum = &s_costsS[512 + 1];
+	float *s_costsS = &s_costsG[512];
+	float *s_sum = &s_costsS[512];
 	float *s_valid = &s_sum[512];
 
 	//float *s_costs1_0 = &s_valid[m_h];
@@ -517,49 +517,53 @@ __global__ void KernDP(int m_w, int m_h, int fnmax, float * d_disparity_colReduc
 	float *s_costTableO = &s_costTableG[m_h];
 	float *s_costTableS = &s_costTableO[m_h];
 
-	//float *s_valid_tmp = &s_costTableS[m_h];
+	float *s_valid_tmp = &s_costTableS[m_h];
 
 	float val = d_disparity_colReduced[index];
 	s_valid[vT] = val < 0 ? 0 : 1;
 	s_sum[vT] = val < 0 ? 0 : val;
-	//s_costsG[vT] = d_costsG[index];
-	//s_costsS[vT] = d_costsS[index];
+	s_costsG[vT] = d_costsG[index];
+	s_costsS[vT] = d_costsS[index];
 
-	for (unsigned int stride = 1; stride < blockDim.x; stride *= 2) {
-		__syncthreads();
-		int ind = (jdx + 1) * 2 * stride - 1;
-		int prev = ind - stride;
-		if (ind < blockDim.x) {
-			s_valid[ind] += s_valid[prev];
-			s_sum[ind] += s_sum[prev];
-			//s_costsG[ind] += s_costsG[prev];
-			//s_costsS[ind] += s_costsS[prev];
-		}
-	}
+	//for (unsigned int stride = 1; stride < blockDim.x; stride *= 2) {
+	//	__syncthreads();
+	//	int ind = (jdx + 1) * 2 * stride - 1;
+	//	int prev = ind - stride;
+	//	if (ind < blockDim.x) {
+	//		s_valid[ind] += s_valid[prev];
+	//		s_sum[ind] += s_sum[prev];
+	//		s_costsG[ind] += s_costsG[prev];
+	//		s_costsS[ind] += s_costsS[prev];
+	//	}
+	//}
 
-	for (unsigned int stride = blockDim.x / 4; stride > 0; stride /= 2) {
-		__syncthreads();
-		int ind = (jdx + 1) * 2 * stride - 1;
-		int next = ind + stride;
-		if (next < blockDim.x) {
-			s_valid[next] += s_valid[ind];
-			s_sum[next] += s_sum[ind];
-			//s_costsG[next] += s_costsG[ind];
-			//s_costsS[next] += s_costsS[ind];
-		}
-	}
+	//for (unsigned int stride = blockDim.x / 4; stride > 0; stride /= 2) {
+	//	__syncthreads();
+	//	int ind = (jdx + 1) * 2 * stride - 1;
+	//	int next = ind + stride;
+	//	if (next < blockDim.x) {
+	//		s_valid[next] += s_valid[ind];
+	//		s_sum[next] += s_sum[ind];
+	//		s_costsG[next] += s_costsG[ind];
+	//		s_costsS[next] += s_costsS[ind];
+	//	}
+	//}
 
 	if (u >= m_w || jdx >= m_h) return;
 
-	//val = s_valid[vT];
-	//int lane_id = jdx % warpSize;
-	//int warp_id = jdx / warpSize;
-	//s_valid[vT] = warpSum(s_valid_tmp, val, lane_id, warp_id);
-	//val = s_sum[vT];
-	//s_sum[vT] = warpSum(s_valid_tmp, val, lane_id, warp_id);
+	val = s_valid[vT];
+	int lane_id = jdx % warpSize;
+	int warp_id = jdx / warpSize;
+	s_valid[vT] = warpSum(s_valid_tmp, val, lane_id, warp_id);
+	val = s_sum[vT];
+	s_sum[vT] = warpSum(s_valid_tmp, val, lane_id, warp_id);
+	val = s_costsG[vT];
+	s_costsG[vT] = warpSum(s_valid_tmp, val, lane_id, warp_id);
+	val = s_costsS[vT];
+	s_costsS[vT] = warpSum(s_valid_tmp, val, lane_id, warp_id);
 
-	s_costsG[vT] = d_costsG[index];
-	s_costsS[vT] = d_costsS[index];
+	//s_costsG[vT] = d_costsG[index];
+	//s_costsS[vT] = d_costsS[index];
 	//s_sum[vT] = d_sum[index];
 	//s_valid[vT] = d_valid[index];
 

@@ -53,8 +53,8 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	//kernScanCosts << <dimGrid, BLOCKSIZE, 0, streams[0] >> > (m_w, m_h, d_sum);
 
 	m_dataTermO.computeCostsO2(&streams[4]);
-	m_dataTermS.computeCostsS2(&streams[3]);
-	m_dataTermG.computeCostsG2(&streams[2]);
+	//m_dataTermS.computeCostsS2(&streams[3]);
+	//m_dataTermG.computeCostsG2(&streams[2]);
 
 	/*test no streaming*/
 	//cudaMemcpyAsync(d_valid, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice, streams[0]);
@@ -80,7 +80,7 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 
 
 	//int smem_size = 13 * m_h * sizeof(float);
-	int smem_size = 11 * m_h * sizeof(float) + 512 * 3 * sizeof(float);
+	int smem_size = 9 * m_h * sizeof(float) + 512 * 5 * sizeof(float);
 	KernDP << <m_w, 512, smem_size >> > (m_w, m_h, fnmax, d_disparity_colReduced, d_sum, d_valid,
 		m_dataTermG.d_costsG, m_dataTermO.d_costsO, m_dataTermS.d_costsS,
 		d_costTableG, d_costTableO, d_costTableS, d_dispTableG, d_dispTableO, d_dispTableS, d_indexTableG, d_indexTableO, d_indexTableS,
