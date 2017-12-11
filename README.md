@@ -55,6 +55,7 @@ In the dynamic programming stage, there are repeated read of the cost tables. Sh
 |Method | Niave | Shared Memory |
 |---|---:|---:|
 |time per frame (ms)| 68.145| 61.817|
+
 The implementation after this part all load cost table into shared memory
 
 ### CUDA streams
@@ -66,7 +67,27 @@ Streams are "Task-level" parallelism. By default, all kernel are launched on the
 [![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/streams3ndTry.PNG)]()
 Figure 5: Parallel kernel lanch
 
+|Method | No streams | Use streams |
+|---|---:|---:|
+|time per frame (ms)| 61.817| 59.235|
 
+### Improving scan performance
+The scan tasks in this project are mainly doing prefix sum on each row of cost tables, which are 2D Matrices. So far my implementation is launching `w` threads and call `thrust::inclusive_scan` to compute the cost tables. The performance is not very good and it turns out that calling `thrust` in kernel functions will lead to sequential a scan. Replacing it with a parallel scan in shared memory improve the performance a lot, which is shown below.
+
+|Method |  Scan in shared memory | Sequential |
+|---|---:|---:|
+|time per frame (ms)| 49.767 | 59.235|
+
+### Scan on load
+In the dynamic programming stage, the kernel function launch `w` blocks and 'h' threads in each block, which corresponds to the dimension of the input data. In addition, computing the prefix sums of the cost tables launch the same number of blocks and threads. So the scan can take place at the very beginning of the dyanmic programming stage. This saves the time of launching kernel functions and the computation also take place in the shared memory. Results are shown below
+
+|Method |  Scan in separate kernel | Scan on load |
+|---|---:|---:|
+|time per frame (ms)| 49.767 | 45.391|
+
+### Warp shuffle
+Shuffle enables threads communicate within a warp in registers. We can use shuffle for scan. 
+[![]()]()
 
 ## Reference
 1. Hernandez-Juarez, Daniel, et al. "GPU-accelerated real-time stixel computation." Applications of Computer Vision (WACV), 2017 IEEE Winter Conference on. IEEE, 2017.
