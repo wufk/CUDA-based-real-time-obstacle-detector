@@ -38,7 +38,7 @@ Figure 2: Stixels computation under good weather. The above figure is the disapr
 2. On each image frames:
       * Compute disparities from the left and right image.
       * Reduce the columns by a factor of stixel width by replacing the disparities of consecutive pixels by their average. Transpose the image to have a better access pattern for subsequent tasks.
-      * Compute the 'look-up tables' to have constant time computation.
+      * Compute the 'look-up tables' to have constant time computation.
       * Compute the stixels using dynamic programming and keep track of the stixels by backtracking.
 
 ## Performance Analysis
