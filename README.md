@@ -104,7 +104,7 @@ The results are follows
 [![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/chart1.png)]()
 Image size: 1024 * 333 pixels, Stixel width: 7 pixels
 
-
+[![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/char2.png)]()
 Image size: 1024 * 333 pixels
 
 ## Future work
@@ -115,7 +115,14 @@ Figure : Stixels computation under bad weather. The above figure is the original
 
 Results shows that under good weather, the detection is pretty well. While in rainy days, the reflection of the the vehicles are also recognized as stixels, which is not very satisfying.
 
-### Shortcoming
+### Problem unresolved
+In the project, I have four variables that can be scanned on load. The 'scan on load' method mentioned above actually scans the on-loading data using shared memory and only the scan outside the dynamic programming uses shuffle. When I tried using shuffle scan on the on-loading data, the performance is not improved. Also, when I loaded more data to scan in DP kernel, the performance also decrease, see the table below.
+
+|Method | 4 in smem in DP  | 4 shfl in DP | 2 smem in DP, 2 shfl outsied |
+|---|---:|---:|---:|
+|time per frame (ms)| 37.663 | 37.126 | 36.409
+
+If loading more data to shared memory, bank conflicts are more easily to happen. Tried add paddings when loading the data but it does not help. 
 
 ## Reference
 1. Hernandez-Juarez, Daniel, et al. "GPU-accelerated real-time stixel computation." Applications of Computer Vision (WACV), 2017 IEEE Winter Conference on. IEEE, 2017.
