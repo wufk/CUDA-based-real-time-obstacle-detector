@@ -24,18 +24,48 @@ This project aims to develop a fast real-time obstacle detector using OpenCV and
   ```
   Configure and generate.
 
-* Usage: ` CUDA-based-real-time-obstacle-detector.exe left_image right_image camera_config.xml stixelWidth`. If you download the dataset from Ref-3, for example, run ` CUDA-based-real-time-obstacle-detector.exe images\img_c0_%09d.pgm images\img_c1_%09d.pgm camera.xml 7 `.
+* Usage: ` CUDA-based-real-time-obstacle-detector.exe left_image right_image camera_config.xml stixelWidth`. 
+
+* Example: If you download the dataset from Ref-3, run ` CUDA-based-real-time-obstacle-detector.exe images\img_c0_%09d.pgm images\img_c1_%09d.pgm camera.xml 7 `.
 
 ## Results
 [![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/stixels_goodWeather.gif)]()
-Figure.2 Stixels computation under good weather. The above figure is the disaprity image. 
-
+Figure 2: Stixels computation under good weather. The above figure is the disaprity image. 
 [![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/stixels_badweather2.gif)]()
-Figure.3 Stixels computation under bad weather. The above figure is the original image.
+Figure 3: Stixels computation under bad weather. The above figure is the original image.
 
 Results shows that under good weather, the detection is pretty well. While in rainy days, the reflection of the the vehicles are also recognized as stixels, which is not very satisfying.
 
+## GPU implementation pipeline
+1. Suppose the input frame streams have same properties, e.g. image resolution and cameral configuration, read the first frame to allocate resources and pre-compute the variables needed.
+2. On each image frames:
+      * Compute disparities from the left and right image.
+      * Reduce the columns by a factor of stixel width by replacing the disparities of consecutive pixels by their average. Transpose the image to have a better access pattern for subsequent tasks.
+      * Compute the 'look-up tables' to have constant time computation.
+      * Compute the stixels using dynamic programming and keep track of the stixels by backtracking.
+
 ## Performance Analysis
+Suppose the height and width of the reduced-disparity image is `h x w`, and the disparity range is `dmax`. The dynamic programming part is the most time consuming part among the four stages discussed above while computing stixels for each frame. The total amount of work would be `O(h x h x w)`. The computation of the Object look-up table is also a main part. It basically compute a cost value based on the disparity using prefix sums. The complexity is `O(h x w x dmax)`. The performance focus is on the computation of these two operations. 
+
+For the implementation below, the input data has `1024x333` pixels and `dmax = 64`. If not sepcified, the stixel width is `7`.
+
+### Naive way and shared memory
+In the dynamic programming stage, there are repeated read of the cost tables. Shared memory in GPU provides us a customized cache to enable fast data transfer. The computation is on each column is independent of other columns, so we can load many variables into the shared memory. The results are shown below.
+
+|Method | Niave | Shared Memory |
+|---|---:|---:|
+|time per frame (ms)| 68.145| 61.817|
+The implementation after this part all load cost table into shared memory
+
+### CUDA streams
+[![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/sequential.PNG)]()
+Figure 4: Sequential kernel launch
+
+Streams are "Task-level" parallelism. By default, all kernel are launched on the same stream, which is shown on the figure above. In face, before the dynamic programming stage, the computation of the cost tables are indepedent. Running theses kernel functions in the same stream waste the resources. In this case, five additional streams are created. After some adjustment of the launching sequence, the results are show below.
+
+[![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/streams3ndTry.PNG)]()
+Figure 5: Parallel kernel lanch
+
 
 
 ## Reference
