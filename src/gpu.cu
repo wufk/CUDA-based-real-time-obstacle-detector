@@ -25,7 +25,6 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 		std::cout << "disparity not continuous\n";
 		exit(1);
 	}
-
 	cudaMemcpy(d_disparity_original, h_disparity, m_rows * m_cols * sizeof(float), cudaMemcpyHostToDevice);
 
 	dim3 dimBlock(BLOCKSIZE, BLOCKSIZE, 1);
@@ -35,10 +34,10 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 
 	columnReduction << <dimGrid, dimBlock >> > (d_disparity_original, d_disparity_colReduced, stixelWidth, m_rows, m_cols, m_w);// default stream
 	cudaDeviceSynchronize();
-	//cudaMemcpyAsync(d_valid, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice, streams[1]); 
-	//cudaMemcpyAsync(d_sum, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice, streams[0]); 
-	//kerndValid << <dimGrid, dimBlock, 0, streams[1] >> > (m_w, m_h, d_valid);
-	//kerndSum << <dimGrid, dimBlock, 0, streams[0] >> > (m_w, m_h, d_sum);
+	cudaMemcpyAsync(d_valid, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice, streams[1]); 
+	cudaMemcpyAsync(d_sum, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice, streams[0]); 
+	kerndValid << <dimGrid, dimBlock, 0, streams[1] >> > (m_w, m_h, d_valid);
+	kerndSum << <dimGrid, dimBlock, 0, streams[0] >> > (m_w, m_h, d_sum);
 
 	m_dataTermO.computeCostsO1(d_disparity_colReduced, &streams[4]);
 	m_dataTermS.computeCostsS1(d_disparity_colReduced, &streams[3]);
@@ -47,14 +46,14 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	dimGrid = dim3(divup(m_w, BLOCKSIZE));
 	//kernScan1shf << <m_w, 512, 512 * sizeof(float), streams[1] >> > (m_w, m_h, d_valid);
 	//kernScan1shf << <m_w, 512, 512 * sizeof(float), streams[0] >> > (m_w, m_h, d_sum);
-	//kernScan1 << <m_w, 512, 512 * sizeof(float), streams[1] >> > (m_w, m_h, d_valid);
-	//kernScan1 << <m_w, 512, 512 * sizeof(float), streams[0]>> > (m_w, m_h, d_sum);
+	kernScan1 << <m_w, 512, 512 * sizeof(float), streams[1] >> > (m_w, m_h, d_valid);
+	kernScan1 << <m_w, 512, 512 * sizeof(float), streams[0]>> > (m_w, m_h, d_sum);
 	//kernScanCosts << <dimGrid, BLOCKSIZE, 0, streams[1] >> > (m_w, m_h, d_valid);
 	//kernScanCosts << <dimGrid, BLOCKSIZE, 0, streams[0] >> > (m_w, m_h, d_sum);
 
 	m_dataTermO.computeCostsO2(&streams[4]);
-	//m_dataTermS.computeCostsS2(&streams[3]);
-	//m_dataTermG.computeCostsG2(&streams[2]);
+	m_dataTermS.computeCostsS2(&streams[3]);
+	m_dataTermG.computeCostsG2(&streams[2]);
 
 	/*test no streaming*/
 	//cudaMemcpyAsync(d_valid, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice, streams[0]);
@@ -67,10 +66,10 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 	//m_dataTermG.computeCostsG1(d_disparity_colReduced, &streams[0]);
 
 	//dimGrid = dim3(divup(m_w, BLOCKSIZE));
-	////kernScan1 << <m_w, 512, 512 * sizeof(float), streams[1] >> > (m_w, m_h, d_valid);
-	////kernScan1 << <m_w, 512, 512 * sizeof(float), streams[0]>> > (m_w, m_h, d_sum);
-	//kernScanCosts << <dimGrid, BLOCKSIZE, 0, streams[0] >> > (m_w, m_h, d_valid);
-	//kernScanCosts << <dimGrid, BLOCKSIZE, 0, streams[0] >> > (m_w, m_h, d_sum);
+	//kernScan1 << <m_w, 512, 512 * sizeof(float), streams[0] >> > (m_w, m_h, d_valid);
+	//kernScan1 << <m_w, 512, 512 * sizeof(float), streams[0]>> > (m_w, m_h, d_sum);
+	////kernScanCosts << <dimGrid, BLOCKSIZE, 0, streams[0] >> > (m_w, m_h, d_valid);
+	////kernScanCosts << <dimGrid, BLOCKSIZE, 0, streams[0] >> > (m_w, m_h, d_sum);
 
 	//m_dataTermO.computeCostsO2(&streams[0]);
 	//m_dataTermS.computeCostsS2(&streams[0]);
@@ -78,9 +77,8 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 
 	cudaDeviceSynchronize();
 
-
-	//int smem_size = 13 * m_h * sizeof(float);
-	int smem_size = 9 * m_h * sizeof(float) + 512 * 5 * sizeof(float);
+	int smem_size = 13 * m_h * sizeof(float);
+	//int smem_size = 9 * m_h * sizeof(float) + 512 * 4 * sizeof(float);
 	KernDP << <m_w, 512, smem_size >> > (m_w, m_h, fnmax, d_disparity_colReduced, d_sum, d_valid,
 		m_dataTermG.d_costsG, m_dataTermO.d_costsO, m_dataTermS.d_costsS,
 		d_costTableG, d_costTableO, d_costTableS, d_dispTableG, d_dispTableO, d_dispTableS, d_indexTableG, d_indexTableO, d_indexTableS,
@@ -239,10 +237,10 @@ inline void gpuNegativeLogDataTermGrd::computeCostsG1(float* d_disp_colReduced, 
 
 inline void gpuNegativeLogDataTermGrd::computeCostsG2(cudaStream_t* stream) {
 	dim3 dimGrid = dim3(divup(m_w, BLOCKSIZE));
-	//kernScanCosts << <dimGrid, BLOCKSIZE, 0, *stream >> > (m_w, m_h, d_costsG);
 
-	//kernScan1 << <m_w, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, d_costsG);
-	kernScan1shf << <m_w, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, d_costsG);
+	//kernScanCosts << <dimGrid, BLOCKSIZE, 0, *stream >> > (m_w, m_h, d_costsG);
+	kernScan1 << <m_w, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, d_costsG);
+	//kernScan1shf << <m_w, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, d_costsG);
 
 }
 
@@ -288,8 +286,8 @@ inline void gpuNegativeLogDataTermObj::computeCostsO2(cudaStream_t* stream) {
 	dim3 dimBlock = dim3(BLOCKSIZE, BLOCKSIZE);
 
 	//kernScanCostsObj << <dimGrid, dimBlock, 0, *stream >> > (m_w, fnmax, m_h, d_costsO);
-	kernWarpSum << <m_w * fnmax, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, fnmax, d_costsO);
-	//kernScan2 << <m_w * fnmax, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, fnmax, d_costsO);
+	//kernWarpSum << <m_w * fnmax, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, fnmax, d_costsO);
+	kernScan2 << <m_w * fnmax, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, fnmax, d_costsO);
 
 }
 
@@ -342,8 +340,8 @@ inline void gpuNegativeLogDataTermSky::computeCostsS1(float *d_disparity_colRedu
 inline void gpuNegativeLogDataTermSky::computeCostsS2(cudaStream_t* stream) {
 	dim3 dimGrid = dim3(divup(m_w, BLOCKSIZE));
 	//kernScanCosts << <dimGrid, BLOCKSIZE, 0, *stream >> > (m_w, m_h, d_costsS);
-	//kernScan1 << <m_w, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, d_costsS);
-	kernScan1shf << <m_w, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, d_costsS);
+	kernScan1 << <m_w, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, d_costsS);
+	//kernScan1shf << <m_w, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, d_costsS);
 	
 }
 

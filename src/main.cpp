@@ -51,9 +51,9 @@ static void drawStixel(cv::Mat& img, const Stixel& stixel, cv::Scalar color)
 
 int main(int argc, char* argv[])
 {
-	if (argc < 4)
+	if (argc < 5)
 	{
-		std::cout << "usage: " << argv[0] << " left-image-format right-image-format camera.xml" << std::endl;
+		std::cout << "usage: " << argv[0] << " left-image-format right-image-format camera.xml stixelWidth" << std::endl;
 		return -1;
 	}
 
@@ -70,6 +70,7 @@ int main(int argc, char* argv[])
 	CV_Assert(cvfs.isOpened());
 	const cv::FileNode node(cvfs.fs, NULL);
 	StixelWorld::Parameters param;
+	param.stixelWidth = atoi(argv[4]);
 	param.camera.fu = node["FocalLengthX"];
 	param.camera.fv = node["FocalLengthY"];
 	param.camera.u0 = node["CenterX"];
@@ -80,11 +81,12 @@ int main(int argc, char* argv[])
 	param.dmin = -1;
 	param.dmax = numDisparities;
 
-	//cv::Mat dummyRead = cv::imread(argv[1], CV_LOAD_IMAGE_UNCHANGED);
+	char tmpBuf[256];
+	sprintf(tmpBuf, argv[1], 1);
+	cv::Mat dummyRead = cv::imread(tmpBuf, CV_LOAD_IMAGE_UNCHANGED);
 
 	cpuStixelWorld stixelWorld(param);
-	//gpuStixelWorld t_stixelWorld(param, dummyRead.rows, dummyRead.cols);
-	gpuStixelWorld t_stixelWorld(param, 333, 1024);
+	gpuStixelWorld t_stixelWorld(param, dummyRead.rows, dummyRead.cols);
 
 	for (int frameno = 1;; frameno++)
 	{
@@ -162,9 +164,6 @@ int main(int argc, char* argv[])
 		//cv::flip(draw, trans, 1);
 		////cv::imshow("transstixels", trans);
 		//cv::imwrite("./transstixles.jpg", trans);
-
-		//t_stixelWorld.destroy();
-		
 
 		const char c = cv::waitKey(1);
 		if (c == 27)
