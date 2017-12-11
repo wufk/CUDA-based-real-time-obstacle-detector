@@ -15,7 +15,7 @@ This project aims to develop a fast real-time obstacle detector using OpenCV and
 
 ## Build and Usage
 * Make sure you have Visual Sutdio 2015 and CUDA 8 installed.
-* Make sure you have opencv. 
+* Make sure you have opencv and put it in `externel`.
 * Navigate to the cloned repository. Generate/build project using CMake:
   ```
   mkdir build

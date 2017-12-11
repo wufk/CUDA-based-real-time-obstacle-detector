@@ -32,8 +32,10 @@ find_package(GLEW)
 
 find_package(OpenGL)
 
-set(OpenCV_DIR E:/cis565/FinalProj/opencv/build)
-include_directories( E:/cis565/FinalProj/opencv/build/include)
+#set(OpenCV_DIR E:/cis565/FinalProj/opencv/build)
+# include_directories( E:/cis565/FinalProj/opencv/build/include)
+set(OpenCV_DIR ./external/opencv/build)
+include_directories( ./opencv/build/include)
 find_package( OpenCV REQUIRED )
 
 set(CORELIBS
