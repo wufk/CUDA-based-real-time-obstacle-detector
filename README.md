@@ -1,5 +1,6 @@
 # CUDA-based real time obstacle detector
 * Fengkai Wu
+* Tested on: Windows 10, i7-4700HQ @ 2.40GHz 4GB, GEFORCE 745M 2048MB
 
 ## Overview
 Driving assistance software on autonomous vehicles require real-time and robust awareness of the road situation. The project will focus on the implementation of a real-time algorithm that can be GPU accelerated for obstacle detection on a self-driving car.
@@ -12,17 +13,30 @@ This project aims to develop a fast real-time obstacle detector using OpenCV and
 
 [![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/stixels.png)]()
 
-## Usage
+## Build and Usage
+* Make sure you have Visual Sutdio 2015 and CUDA 8 installed.
+* Make sure you have opencv. 
+* Navigate to the cloned repository. Generate/build project using CMake:
+  ```
+  mkdir build
+  cd build
+  cmake-gui ../
+  ```
+  Configure and generate.
+
+* Usage: ` CUDA-based-real-time-obstacle-detector.exe left_image right_image camera_config.xml stixelWidth`. If you download the dataset from Ref-3, for example, run ` CUDA-based-real-time-obstacle-detector.exe images\img_c0_%09d.pgm images\img_c1_%09d.pgm camera.xml 7 `.
 
 ## Results
+[![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/stixels_goodWeather.gif)]()
+Figure.2 Stixels computation under good weather. The above figure is the disaprity image. 
 
-## Analysis
+[![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/stixels_badweather2.gif)]()
+Figure.3 Stixels computation under bad weather. The above figure is the original image.
 
-## Milestones
-* 11/20 Set up the environment and gives a naïve implementation by CPU
-* 11/27 Parallelize the computation on GPU and some initial optimization
-* 12/4  Further optimize the model, compare with other real-time methods like CNN
-* 12/11 Final performance analysis, provide a video demo and give the final presentation
+Results shows that under good weather, the detection is pretty well. While in rainy days, the reflection of the the vehicles are also recognized as stixels, which is not very satisfying.
+
+## Performance Analysis
+
 
 ## Reference
 1. Hernandez-Juarez, Daniel, et al. "GPU-accelerated real-time stixel computation." Applications of Computer Vision (WACV), 2017 IEEE Winter Conference on. IEEE, 2017.
