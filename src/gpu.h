@@ -37,21 +37,10 @@ public:
 		init(dmax, dmin, sigmaD, pOut, pInv, camera, d_groundDisparity, vhor, sigmaH, sigmaA, h);
 	}
 
-	inline float operator()(float d, int v) const
-	{
-		if (d < 0.f)
-			return 0.f;
-
-		return std::min(nLogPUniform_, h_nLogPGaussian_[v] + h_cquad_[v] * (d - h_fn_[v]) * (d - h_fn_[v]));
-	}
-
-	// pre-compute constant terms
 	void init(float dmax, float dmin, float sigmaD, float pOut, float pInv, const CameraParameters& camera,
 		float* d_groundDisparity, float vhor, float sigmaH, float sigmaA, int h);
-	
 	inline void computeCostsG1(float* d_disp_colReduced, cudaStream_t* stream);
 	inline void computeCostsG2(cudaStream_t* stream);
-
 	void destroy();
 
 	int m_h, m_w;
@@ -75,24 +64,15 @@ public:
 	{
 		m_h = h;
 		m_w = w;
-		// Gaussian distribution term
+
 		fnmax = static_cast<int>(dmax);
 
 		init(dmax, dmin, sigma, pOut, pInv, camera, deltaz);
 	}
+
 	inline void computeCostsO1(float *d_disp_colReduced, cudaStream_t* stream);
 	inline void computeCostsO2(cudaStream_t* stream);
 	void destroy();
-
-	inline float operator()(float d, int fn) const
-	{
-		if (d < 0.f)
-			return 0.f;
-
-		return std::min(nLogPUniform_, h_nLogPGaussian_[fn] + h_cquad_[fn] * (d - fn) * (d - fn));
-	}
-
-	// pre-compute constant terms
 	void init(float dmax, float dmin, float sigmaD, float pOut, float pInv, const CameraParameters& camera, float deltaz);
 
 	int m_w;
@@ -119,15 +99,6 @@ public:
 		init(dmax, dmin, sigmaD, pOut, pInv, fn);
 	}
 
-	inline float operator()(float d) const
-	{
-		if (d < 0.f)
-			return 0.f;
-
-		return std::min(nLogPUniform_, nLogPGaussian_ + cquad_ * (d - fn_) * (d - fn_));
-	}
-
-	// pre-compute constant terms
 	void init(float dmax, float dmin, float sigmaD, float pOut, float pInv, float fn);
 	void destroy();
 	inline void computeCostsS1(float *d_disparity_colReduced, cudaStream_t* stream);
@@ -137,10 +108,6 @@ public:
 	float nLogPUniform_, cquad_, nLogPGaussian_, fn_;
 	float *d_costsS, *h_costsS;
 };
-
-//////////////////////////////////////////////////////////////////////////////
-// prior cost functions
-//////////////////////////////////////////////////////////////////////////////
 
 static const float N_LOG_0_3 = -static_cast<float>(log(0.3));
 static const float N_LOG_0_5 = -static_cast<float>(log(0.5));

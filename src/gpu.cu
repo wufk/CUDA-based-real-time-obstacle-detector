@@ -136,7 +136,7 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 				p2 = cv::Point(h_indexTableS[u * m_h + p1.y].x, h_indexTableS[u * m_h + p1.y].y);
 				break;
 			}
-			if (p1.x == 1) // object
+			if (p1.x == 1)
 			{
 				Stixel stixel;
 				stixel.u = stixelWidth * u + stixelWidth / 2;
@@ -179,7 +179,6 @@ void gpuStixelWorld::destroy()
 	cudaFree(d_disparity_original);
 	cudaFree(h_disparity_colReduced);
 	cudaFree(d_groundDisp);
-	//cudaFree(d_disparity_columns);
 	cudaFree(d_groundDisp);
 	cudaFree(d_sum);
 	cudaFree(d_valid);
@@ -201,46 +200,32 @@ void gpuStixelWorld::destroy()
 	delete[] data;
 	delete[] h_groundDisp;
 
-	//cudaFree(d_disparity_colReduced);
-
 }
 
 void gpuNegativeLogDataTermGrd::init(float dmax, float dmin, float sigmaD, 
 	float pOut, float pInv, const CameraParameters & camera, 
 	float* d_groundDisparity, float m_vhor, float sigmaH, float sigmaA, int h)
 {
-	// uniform distribution term
+
 	nLogPUniform_ = logf(dmax - dmin) - logf(pOut);
 	const float cf = camera.fu * camera.baseline / camera.height;
 
-	h_nLogPGaussian_ = new float[h];
-	h_fn_ = new float[h];
-	h_cquad_ = new float[h];
-	h_costsG = new float[m_w * m_h];
+	//h_nLogPGaussian_ = new float[h];
+	//h_fn_ = new float[h];
+	//h_cquad_ = new float[h];
+	//h_costsG = new float[m_w * m_h];
 	cudaMalloc((void**)&d_cquad_, h * sizeof(float));
 	cudaMalloc((void**)&d_fn_, h * sizeof(float));
 	cudaMalloc((void**)&d_nLogPGaussian_, h * sizeof(float));
 	cudaMalloc((void**)&d_costsG, m_w * m_h * sizeof(float));
 
-	/* this is for zero copy */
-	//cudaSetDeviceFlags(cudaDeviceMapHost);
-	//cudaHostAlloc((void**)&h_nLogPGaussian_, h * sizeof(float), cudaHostAllocMapped);
-	//cudaHostAlloc((void**)&h_cquad_, h * sizeof(float), cudaHostAllocMapped);
-	//cudaHostAlloc((void**)&h_fn_, h * sizeof(float), cudaHostAllocMapped);
-	//cudaHostGetDevicePointer((void**)&d_nLogPGaussian_, (void *)h_nLogPGaussian_, 0);
-	//cudaHostGetDevicePointer((void**)&d_cquad_, (void *)h_cquad_, 0);
-	//cudaHostGetDevicePointer((void**)&d_fn_, (void *)h_fn_, 0);
-	//cudaHostAlloc((void**)&h_costsG, m_h * m_w * sizeof(float), cudaHostAllocMapped);
-	//cudaHostGetDevicePointer((void**)&d_costsG, (void *)h_costsG, 0);
-
-
 	dim3 dimBlock(divup(h, BLOCKSIZE));
 	kernComputeNegativeLogDataTermGrd << <dimBlock,BLOCKSIZE >> > (h, d_groundDisparity, d_nLogPGaussian_, d_fn_, d_cquad_,
 		camera.fv, camera.tilt, camera.height, cf, sigmaA, sigmaH, sigmaD, dmax, dmin, SQRT2, PI, pOut, m_vhor);
 
-	cudaMemcpy(h_nLogPGaussian_, d_nLogPGaussian_, h * sizeof(float), cudaMemcpyDeviceToHost);
-	cudaMemcpy(h_fn_, d_fn_, h * sizeof(float), cudaMemcpyDeviceToHost);
-	cudaMemcpy(h_cquad_, d_cquad_, h * sizeof(float), cudaMemcpyDeviceToHost);
+	//cudaMemcpy(h_nLogPGaussian_, d_nLogPGaussian_, h * sizeof(float), cudaMemcpyDeviceToHost);
+	//cudaMemcpy(h_fn_, d_fn_, h * sizeof(float), cudaMemcpyDeviceToHost);
+	//cudaMemcpy(h_cquad_, d_cquad_, h * sizeof(float), cudaMemcpyDeviceToHost);
 }
 
 inline void gpuNegativeLogDataTermGrd::computeCostsG1(float* d_disp_colReduced, cudaStream_t* stream)
@@ -275,10 +260,10 @@ void gpuNegativeLogDataTermGrd::destroy()
 	cudaFree(d_cquad_);
 	cudaFree(d_fn_);
 	cudaFree(d_costsG);
-	delete[] h_nLogPGaussian_;
-	delete[] h_fn_;
-	delete[] h_cquad_;
-	delete[] h_costsG;
+	//delete[] h_nLogPGaussian_;
+	//delete[] h_fn_;
+	//delete[] h_cquad_;
+	//delete[] h_costsG;
 }
 
 
@@ -301,19 +286,10 @@ inline void gpuNegativeLogDataTermObj::computeCostsO1(float * d_disp_colReduced,
 inline void gpuNegativeLogDataTermObj::computeCostsO2(cudaStream_t* stream) {
 	dim3 dimGrid = dim3(divup(m_w, BLOCKSIZE), divup(fnmax, BLOCKSIZE), 1);
 	dim3 dimBlock = dim3(BLOCKSIZE, BLOCKSIZE);
-	
-	//float *h_test = new float[m_w * fnmax * m_h];
-	//float *d_test = nullptr;
-	//float *h_cost = new float[m_w * fnmax * m_h];
-
-	//cudaMalloc((void**)&d_test, m_w * fnmax * m_h * sizeof(float));
-	//cudaMemcpy(d_test, d_costsO, m_w * fnmax * m_h * sizeof(float), cudaMemcpyDeviceToDevice);
 
 	//kernScanCostsObj << <dimGrid, dimBlock, 0, *stream >> > (m_w, fnmax, m_h, d_costsO);
 	kernWarpSum << <m_w * fnmax, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, fnmax, d_costsO);
 	//kernScan2 << <m_w * fnmax, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, fnmax, d_costsO);
-
-	//cudaMemcpy(h_cost, d_costsO, m_h * m_w * fnmax * sizeof(float), cudaMemcpyDeviceToHost);
 
 }
 
@@ -322,60 +298,37 @@ void gpuNegativeLogDataTermObj::destroy()
 	cudaFree(d_nLogPGaussian_);
 	cudaFree(d_cquad_);
 	cudaFree(d_costsO);
-	delete[] h_nLogPGaussian_;
-	delete[] h_cquad_;
-
-	//cudaFree(h_nLogPGaussian_);
-	//cudaFree(h_cquad_);
 }
 
 void gpuNegativeLogDataTermObj::init(float dmax, float dmin, float sigmaD, float pOut, float pInv, const CameraParameters & camera, float deltaz)
 {
-	// uniform distribution term
 	nLogPUniform_ = logf(dmax - dmin) - logf(pOut);
 
-	h_nLogPGaussian_ = new float[fnmax];
-	h_cquad_ = new float[fnmax];
-	h_costsO = new float[m_w * m_h * fnmax];
 	cudaMalloc((void**)&d_cquad_, fnmax * sizeof(float));
 	cudaMalloc((void**)&d_nLogPGaussian_, fnmax * sizeof(float));
 	cudaMalloc((void**)&d_costsO, m_w * m_h * fnmax * sizeof(float));
-
-	/* this is for zero copy */
-	//cudaSetDeviceFlags(cudaDeviceMapHost);
-	//cudaHostAlloc((void**)&h_nLogPGaussian_, fnmax * sizeof(float), cudaHostAllocMapped);
-	//cudaHostAlloc((void**)&h_cquad_, fnmax * sizeof(float), cudaHostAllocMapped);
-	//cudaHostGetDevicePointer((void**)&d_nLogPGaussian_, (void *)h_nLogPGaussian_, 0);
-	//cudaHostGetDevicePointer((void**)&d_cquad_, (void *)h_cquad_, 0);
 
 	dim3 dimBlock(divup(fnmax, BLOCKSIZE));
 	kernComputeNegativeLogDataTermObj << <dimBlock, BLOCKSIZE >> > (fnmax, d_cquad_, d_nLogPGaussian_,
 		camera.fu, camera.baseline, sigmaD, deltaz, SQRT2, PI, pOut, dmin, dmax);
 
-	cudaMemcpy(h_nLogPGaussian_, d_nLogPGaussian_, fnmax * sizeof(float), cudaMemcpyDeviceToHost);
-	cudaMemcpy(h_cquad_, d_cquad_, fnmax * sizeof(float), cudaMemcpyDeviceToHost);
 }
 
 void gpuNegativeLogDataTermSky::init(float dmax, float dmin, float sigmaD, float pOut, float pInv, float fn)
 {
-	// uniform distribution term
 	nLogPUniform_ = logf(dmax - dmin) - logf(pOut);
 
-	// Gaussian distribution term
 	const float ANorm = 0.5f * (erff((dmax - fn) / (SQRT2 * sigmaD)) - erff((dmin - fn) / (SQRT2 * sigmaD)));
 	nLogPGaussian_ = logf(ANorm) + logf(sigmaD * sqrtf(2.f * PI)) - logf(1.f - pOut);
 
-	// coefficient of quadratic part
 	cquad_ = 1.f / (2.f * sigmaD * sigmaD);
 
 	cudaMalloc((void**)&d_costsS, m_h * m_w * sizeof(float));
-	h_costsS = new float[m_h * m_w];
 }
 
 void gpuNegativeLogDataTermSky::destroy()
 {
 	cudaFree(d_costsS);
-	delete[] h_costsS;
 }
 
 inline void gpuNegativeLogDataTermSky::computeCostsS1(float *d_disparity_colReduced, cudaStream_t* stream)
