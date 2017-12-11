@@ -29,12 +29,9 @@ This project aims to develop a fast real-time obstacle detector using OpenCV and
 * Example: If you download the dataset from Ref-3, run ` CUDA-based-real-time-obstacle-detector.exe images\img_c0_%09d.pgm images\img_c1_%09d.pgm camera.xml 7 `.
 
 ## Results
+
 [![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/stixels_goodWeather.gif)]()
 Figure 2: Stixels computation under good weather. The above figure is the disaprity image. 
-[![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/stixels_badweather2.gif)]()
-Figure 3: Stixels computation under bad weather. The above figure is the original image.
-
-Results shows that under good weather, the detection is pretty well. While in rainy days, the reflection of the the vehicles are also recognized as stixels, which is not very satisfying.
 
 ## GPU implementation pipeline
 1. Suppose the input frame streams have same properties, e.g. image resolution and cameral configuration, read the first frame to allocate resources and pre-compute the variables needed.
@@ -60,12 +57,12 @@ The implementation after this part all load cost table into shared memory
 
 ### CUDA streams
 [![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/sequential.PNG)]()
-Figure 4: Sequential kernel launch
+Figure 3: Sequential kernel launch
 
 Streams are "Task-level" parallelism. By default, all kernel are launched on the same stream, which is shown on the figure above. In face, before the dynamic programming stage, the computation of the cost tables are indepedent. Running theses kernel functions in the same stream waste the resources. In this case, five additional streams are created. After some adjustment of the launching sequence, the results are show below.
 
 [![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/streams3ndTry.PNG)]()
-Figure 5: Parallel kernel lanch
+Figure 4: Parallel kernel lanch
 
 |Method | No streams | Use streams |
 |---|---:|---:|
@@ -104,7 +101,17 @@ The results are follows
 
 ### Summary
 
+[![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/chart1.png)]()
 
+## Future work
+### Under bad weather
+
+[![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/stixels_badweather2.gif)]()
+Figure : Stixels computation under bad weather. The above figure is the original image.
+
+Results shows that under good weather, the detection is pretty well. While in rainy days, the reflection of the the vehicles are also recognized as stixels, which is not very satisfying.
+
+### Shortcoming
 
 ## Reference
 1. Hernandez-Juarez, Daniel, et al. "GPU-accelerated real-time stixel computation." Applications of Computer Vision (WACV), 2017 IEEE Winter Conference on. IEEE, 2017.
