@@ -87,7 +87,24 @@ In the dynamic programming stage, the kernel function launch `w` blocks and 'h' 
 
 ### Warp shuffle
 Shuffle enables threads communicate within a warp in registers. We can use shuffle for scan. 
-[![]()]()
+[![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/scan.jpg)]()
+
+The above figure shows the naive scan. A shuffle scan algorithm can be implemented using `__shfl_up`:
+```
+  scan each warp using __shufl_up.
+  write warpsum whithin the warp in shared memory buffer.
+  scan the buffer using __shufl_up.
+  add the increment back to all elements in their respective warp
+```
+The results are follows
+
+|Method |  Scan using shuffle | Scan using shared memory|
+|---|---:|---:|
+|time per frame (ms)| 36.409 | 45.391|
+
+### Summary
+
+
 
 ## Reference
 1. Hernandez-Juarez, Daniel, et al. "GPU-accelerated real-time stixel computation." Applications of Computer Vision (WACV), 2017 IEEE Winter Conference on. IEEE, 2017.
@@ -95,3 +112,5 @@ Shuffle enables threads communicate within a warp in registers. We can use shuff
 2. Cordts, Marius, et al. "The Stixel world: A medium-level representation of traffic scenes." Image and Vision Computing (2017).
 
 3. Dataset: [6d-vision](http://www.6d-vision.com/ground-truth-stixel-dataset)
+
+4. [Similar previous work](https://github.com/gishi523/multilayer-stixel-world)
