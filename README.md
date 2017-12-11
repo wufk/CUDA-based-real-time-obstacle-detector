@@ -102,6 +102,10 @@ The results are follows
 ### Summary
 
 [![](https://github.com/wufk/CUDA-based-real-time-obstacle-detector/blob/master/img/chart1.png)]()
+Image size: 1024 * 333 pixels, Stixel width: 7 pixels
+
+
+Image size: 1024 * 333 pixels
 
 ## Future work
 ### Under bad weather
