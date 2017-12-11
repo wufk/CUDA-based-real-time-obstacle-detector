@@ -65,6 +65,10 @@ __global__ void kernScan1(int m_w, int m_h, float *data);
 
 __global__ void kernScan2(int m_w, int m_h, int fnmax, float * data);
 
+__global__ void kernScan1shf(int m_w, int m_h, float *data);
+
+__global__ void kernWarpSum(int m_w, int m_h, int fnmax, float *data);
+
 __global__ void KernDP(int m_w, int m_h, int fnmax, float *d_disparity_colReduced, float *d_sum, float *d_valid,
 	float *d_costsG, float *d_costsO, float *d_costsS, float *d_costTableG, float *d_costTableO, float *d_costTableS, 
 	float *d_dispTableG, float *d_dispTableO, float *d_dispTableS,

@@ -35,26 +35,52 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 
 	columnReduction << <dimGrid, dimBlock >> > (d_disparity_original, d_disparity_colReduced, stixelWidth, m_rows, m_cols, m_w);// default stream
 	cudaDeviceSynchronize();
-	cudaMemcpyAsync(d_valid, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice, streams[1]); 
-	cudaMemcpyAsync(d_sum, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice, streams[0]); 
-	kerndValid << <dimGrid, dimBlock, 0, streams[1] >> > (m_w, m_h, d_valid);//
-	kerndSum << <dimGrid, dimBlock, 0, streams[0] >> > (m_w, m_h, d_sum);
+	//cudaMemcpyAsync(d_valid, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice, streams[1]); 
+	//cudaMemcpyAsync(d_sum, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice, streams[0]); 
+	//kerndValid << <dimGrid, dimBlock, 0, streams[1] >> > (m_w, m_h, d_valid);
+	//kerndSum << <dimGrid, dimBlock, 0, streams[0] >> > (m_w, m_h, d_sum);
 
 	m_dataTermO.computeCostsO1(d_disparity_colReduced, &streams[4]);
 	m_dataTermS.computeCostsS1(d_disparity_colReduced, &streams[3]);
 	m_dataTermG.computeCostsG1(d_disparity_colReduced, &streams[2]);
 
 	dimGrid = dim3(divup(m_w, BLOCKSIZE));
-	kernScan1 << <m_w, 512, 512 * sizeof(float), streams[1] >> > (m_w, m_h, d_valid);
-	kernScan1 << <m_w, 512, 512 * sizeof(float), streams[0]>> > (m_w, m_h, d_sum);
+	//kernScan1shf << <m_w, 512, 512 * sizeof(float), streams[1] >> > (m_w, m_h, d_valid);
+	//kernScan1shf << <m_w, 512, 512 * sizeof(float), streams[0] >> > (m_w, m_h, d_sum);
+	//kernScan1 << <m_w, 512, 512 * sizeof(float), streams[1] >> > (m_w, m_h, d_valid);
+	//kernScan1 << <m_w, 512, 512 * sizeof(float), streams[0]>> > (m_w, m_h, d_sum);
+	//kernScanCosts << <dimGrid, BLOCKSIZE, 0, streams[1] >> > (m_w, m_h, d_valid);
+	//kernScanCosts << <dimGrid, BLOCKSIZE, 0, streams[0] >> > (m_w, m_h, d_sum);
 
 	m_dataTermO.computeCostsO2(&streams[4]);
 	m_dataTermS.computeCostsS2(&streams[3]);
 	m_dataTermG.computeCostsG2(&streams[2]);
 
+	/*test no streaming*/
+	//cudaMemcpyAsync(d_valid, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice, streams[0]);
+	//cudaMemcpyAsync(d_sum, d_disparity_colReduced, m_w * m_h * sizeof(float), cudaMemcpyDeviceToDevice, streams[0]);
+	//kerndValid << <dimGrid, dimBlock, 0, streams[0] >> > (m_w, m_h, d_valid);
+	//kerndSum << <dimGrid, dimBlock, 0, streams[0] >> > (m_w, m_h, d_sum);
+
+	//m_dataTermO.computeCostsO1(d_disparity_colReduced, &streams[0]);
+	//m_dataTermS.computeCostsS1(d_disparity_colReduced, &streams[0]);
+	//m_dataTermG.computeCostsG1(d_disparity_colReduced, &streams[0]);
+
+	//dimGrid = dim3(divup(m_w, BLOCKSIZE));
+	////kernScan1 << <m_w, 512, 512 * sizeof(float), streams[1] >> > (m_w, m_h, d_valid);
+	////kernScan1 << <m_w, 512, 512 * sizeof(float), streams[0]>> > (m_w, m_h, d_sum);
+	//kernScanCosts << <dimGrid, BLOCKSIZE, 0, streams[0] >> > (m_w, m_h, d_valid);
+	//kernScanCosts << <dimGrid, BLOCKSIZE, 0, streams[0] >> > (m_w, m_h, d_sum);
+
+	//m_dataTermO.computeCostsO2(&streams[0]);
+	//m_dataTermS.computeCostsS2(&streams[0]);
+	//m_dataTermG.computeCostsG2(&streams[0]);
+
 	cudaDeviceSynchronize();
 
-	int smem_size = 13 * m_h * sizeof(float);
+
+	//int smem_size = 13 * m_h * sizeof(float);
+	int smem_size = 11 * m_h * sizeof(float) + 512 * 3 * sizeof(float);
 	KernDP << <m_w, 512, smem_size >> > (m_w, m_h, fnmax, d_disparity_colReduced, d_sum, d_valid,
 		m_dataTermG.d_costsG, m_dataTermO.d_costsO, m_dataTermS.d_costsS,
 		d_costTableG, d_costTableO, d_costTableS, d_dispTableG, d_dispTableO, d_dispTableS, d_indexTableG, d_indexTableO, d_indexTableS,
@@ -127,12 +153,8 @@ void gpuStixelWorld::compute(const cv::Mat & disparity, std::vector<Stixel>& sti
 
 void gpuStixelWorld::preprocess(const CameraParameters & camera, float sinTilt, float cosTilt)
 {
-	// This is zero copy
-	//cudaSetDeviceFlags(cudaDeviceMapHost);
 	cudaMalloc((void**)&d_groundDisp, m_h * sizeof(float));
 	h_groundDisp = new float[m_h];
-	//cudaHostAlloc((void**)&h_groundDisp, m_h * sizeof(float), cudaHostAllocMapped);
-	//cudaHostGetDevicePointer((void**)&d_groundDisp, (void *)h_groundDisp, 0);
 
 	kernComputeGroundDisp << <divup(m_h, BLOCKSIZE), BLOCKSIZE >> > (d_groundDisp, m_h,
 		camera.baseline, camera.height, camera.fu, camera.v0, sinTilt, cosTilt);
@@ -234,7 +256,9 @@ inline void gpuNegativeLogDataTermGrd::computeCostsG2(cudaStream_t* stream) {
 	dim3 dimGrid = dim3(divup(m_w, BLOCKSIZE));
 	//kernScanCosts << <dimGrid, BLOCKSIZE, 0, *stream >> > (m_w, m_h, d_costsG);
 
-	kernScan1 << <m_w, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, d_costsG);
+	//kernScan1 << <m_w, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, d_costsG);
+	kernScan1shf << <m_w, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, d_costsG);
+
 }
 
 
@@ -268,15 +292,10 @@ inline void gpuNegativeLogDataTermObj::computeCostsO1(float * d_disp_colReduced,
 	//dimBlock = dim3(BLOCKSIZE, BLOCKSIZE);
 	//kernScanCostsObj << <dimGrid, dimBlock >> > (m_w, m_h, fnmax, d_costsO);
 
-
 	dim3 dimGrid(r, t, c);
 	dim3 dimBlock(8, 8, 8);
 	kernComputeCostsOO << <dimGrid, dimBlock, 0, *stream >> > (m_w, fnmax, m_h, d_costsO, d_disp_colReduced, d_nLogPGaussian_, d_cquad_, nLogPUniform_);
 	dimGrid = dim3(divup(m_w, BLOCKSIZE), divup(fnmax, BLOCKSIZE), 1);
-	//dimBlock = dim3(BLOCKSIZE, BLOCKSIZE);
-	//kernScanCostsObj << <dimGrid, dimBlock, 0, *(++stream) >> > (m_w, fnmax, m_h, d_costsO);
-
-	//cudaMemcpy(h_costsO, d_costsO, m_h * m_w * fnmax * sizeof(float), cudaMemcpyDeviceToHost);
 }
 
 inline void gpuNegativeLogDataTermObj::computeCostsO2(cudaStream_t* stream) {
@@ -291,21 +310,10 @@ inline void gpuNegativeLogDataTermObj::computeCostsO2(cudaStream_t* stream) {
 	//cudaMemcpy(d_test, d_costsO, m_w * fnmax * m_h * sizeof(float), cudaMemcpyDeviceToDevice);
 
 	//kernScanCostsObj << <dimGrid, dimBlock, 0, *stream >> > (m_w, fnmax, m_h, d_costsO);
-	kernScan2 << <m_w * fnmax, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, fnmax, d_costsO);
+	kernWarpSum << <m_w * fnmax, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, fnmax, d_costsO);
+	//kernScan2 << <m_w * fnmax, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, fnmax, d_costsO);
+
 	//cudaMemcpy(h_cost, d_costsO, m_h * m_w * fnmax * sizeof(float), cudaMemcpyDeviceToHost);
-
-	//kernScan2 << <m_w * fnmax, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, fnmax, d_test);
-	//cudaMemcpy(h_test, d_test, m_h * m_w * fnmax * sizeof(float), cudaMemcpyDeviceToHost);
-
-
-	//for (int i = 0; i < m_w * fnmax; i++) {
-	//	for (int k = 0; k < m_h ; k++) {
-	//		int ii = i * m_h + k;
-	//		if ( abs(h_cost[ii] - h_test[ii]) > 0.1)
-	//			std::cout << i << " " << k << ":" << h_cost[ii] << "  " << h_test[ii] << std::endl;
-	//	}
-	//}
-	//std::cout << std::endl;
 
 }
 
@@ -376,21 +384,18 @@ inline void gpuNegativeLogDataTermSky::computeCostsS1(float *d_disparity_colRedu
 	dim3 dimGrid(r, c, 1);
 	dim3 dimBlock(BLOCKSIZE, BLOCKSIZE, 1);
 	kernComputeCostsS << <dimGrid, dimBlock, 0, *stream >> > (m_w, m_h, d_costsS, d_disparity_colReduced, nLogPUniform_, cquad_, nLogPGaussian_, fn_);
-	//dimGrid = dim3(divup(m_w, BLOCKSIZE));
-	//kernScanCosts << <dimGrid, BLOCKSIZE, 0, *stream >> > (m_w, m_h, d_costsS);
-	//cudaMemcpy(h_costsS, d_costsS, m_h * m_w * sizeof(float), cudaMemcpyDeviceToHost);
 }
 
 inline void gpuNegativeLogDataTermSky::computeCostsS2(cudaStream_t* stream) {
 	dim3 dimGrid = dim3(divup(m_w, BLOCKSIZE));
 	//kernScanCosts << <dimGrid, BLOCKSIZE, 0, *stream >> > (m_w, m_h, d_costsS);
-	kernScan1 << <m_w, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, d_costsS);
+	//kernScan1 << <m_w, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, d_costsS);
+	kernScan1shf << <m_w, 512, 512 * sizeof(float), *stream >> > (m_w, m_h, d_costsS);
+	
 }
 
 void gpuNegativeLogPriorTerm::init(int h, float m_vhor, float dmax, float dmin, float b, float fu, float deltaz, float eps, float pOrd, float pGrav, float pBlg, float* groundDisparity)
 {
-	//const int fnmax = static_cast<int>(dmax);
-
 	cudaMalloc((void**)&d_costs0_, m_h * 2 * sizeof(float));
 	cudaMalloc((void**)&d_costs1_, m_h * 9 * sizeof(float));
 	cudaMalloc((void**)&d_costs2_O_O_, fnmax * fnmax * sizeof(float));
@@ -497,14 +502,6 @@ void gpuNegativeLogPriorTerm::init(int h, float m_vhor, float dmax, float dmin, 
 				costs2_S_O_(d2, d1) = N_LOG_0_0;
 		}
 	}
-
-
-	/*costs0_.create(h, 2);
-	costs1_.create(h, 3, 3);
-	costs2_O_O_.create(fnmax, fnmax);
-	costs2_O_S_.create(1, fnmax);
-	costs2_O_G_.create(h, fnmax);
-	costs2_S_O_.create(fnmax, fnmax);*/
 
 
 	cudaMemcpy(d_costs0_, costs0_.data, m_h * 2 * sizeof(float), cudaMemcpyHostToDevice);
